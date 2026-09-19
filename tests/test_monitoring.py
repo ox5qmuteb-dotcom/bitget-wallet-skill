@@ -21,6 +21,7 @@ from scripts.monitoring import (
     SolanaRpcProviderAdapter,
     ThreadingHTTPServer,
     WalletAssetConfig,
+    _cmd_serve,
     build_alerts,
     ensure_no_plaintext_secrets,
     parse_decimal,
@@ -689,6 +690,15 @@ class MonitoringTests(unittest.TestCase):
             thread.join()
         self.assertEqual(status_code, 500)
         self.assertEqual(payload["status"], "error")
+
+    def test_serve_rejects_non_loopback_bind_host(self):
+        class Args:
+            host = "0.0.0.0"
+            port = 8787
+            config = "/tmp/unused.json"
+
+        with self.assertRaises(ConfigError):
+            _cmd_serve(Args())
 
 
 if __name__ == "__main__":

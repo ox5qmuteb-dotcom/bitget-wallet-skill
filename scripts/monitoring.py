@@ -475,7 +475,7 @@ class HttpTransport:
         headers: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         attempts = self.retries + 1
-        last_error: Optional[Exception] = None
+        last_error: Optional[ProviderError] = None
         for attempt in range(attempts):
             try:
                 response = self.session.request(
@@ -495,10 +495,10 @@ class HttpTransport:
                     raise ProviderError(f"invalid JSON response from {url}") from exc
             except RetryableProviderError as exc:
                 last_error = exc
-            except requests.Timeout as exc:
-                last_error = RetryableProviderError(f"timeout calling {url}")  # type: ignore[assignment]
+            except requests.Timeout:
+                last_error = RetryableProviderError(f"timeout calling {url}")
             except requests.RequestException as exc:
-                last_error = RetryableProviderError(str(exc))  # type: ignore[assignment]
+                last_error = RetryableProviderError(str(exc))
             if attempt < attempts - 1:
                 time.sleep(min(0.25 * (2 ** attempt), 1.0))
         raise ProviderError(str(last_error) if last_error else f"request failed for {url}")
@@ -989,6 +989,8 @@ def _cmd_health(args: argparse.Namespace) -> None:
 
 
 def _cmd_serve(args: argparse.Namespace) -> None:
+    if args.host not in {"127.0.0.1", "::1", "localhost"}:
+        raise ConfigError("monitoring server host must be a localhost/loopback address")
     service = load_service(args.config)
     service.refresh()
     server = ThreadingHTTPServer((args.host, args.port), MonitoringRequestHandler)

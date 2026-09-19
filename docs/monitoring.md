@@ -22,6 +22,7 @@ python3 scripts/monitoring.py serve --config /absolute/path/to/config/monitoring
 ```
 
 - Configure public RPC endpoints with `.env` values from `.env.example`.
+- Replace the `BGW_MONITOR_CONFIG` example path with your own repository path before running the CLI or server.
 - Config accepts modern `assets` entries and still reads legacy `wallets` entries for backward compatibility.
 - Snapshots now include `asset_type`, identifier, approximate value totals, and optional `recent_history`.
 - Native EVM asset pricing can use `metadata.pricing_contract` when the price source expects a wrapped-token contract.
@@ -51,6 +52,7 @@ python3 scripts/monitoring.py serve --config /absolute/path/to/config/monitoring
 ```
 
 - استخدم `.env.example` كنموذج لقيم البيئة غير السرية فقط.
+- استبدل مسار `BGW_MONITOR_CONFIG` في المثال بمسار المستودع لديك قبل التشغيل.
 - الإعدادات تقبل `assets` بشكل أساسي، مع استمرار دعم `wallets` القديمة للتوافق.
 - المخرجات أصبحت تعرض `asset_type` والمعرّف والإجماليات و`recent_history` عند توفرها.
 - يمكن تسعير الأصل الأصلي في شبكات EVM عبر `metadata.pricing_contract` إذا كان مصدر السعر يحتاج عقدًا مماثلًا للنسخة المغلفة.
