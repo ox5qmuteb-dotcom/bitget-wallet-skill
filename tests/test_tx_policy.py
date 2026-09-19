@@ -166,6 +166,34 @@ class TxPolicyTest(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "approval token"):
             evaluate_transfer(req, self.cfg)
 
+    def test_rejects_disabled_rws_asset_by_default(self):
+        cfg = PolicyConfig(
+            allowlist={"eth": {"0x1111111111111111111111111111111111111111"}},
+            supported_assets={"eth": {"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"}},
+            disabled_assets={"rws"},
+            allow_native_transfer=False,
+        )
+        req = TransferRequest(
+            chain="eth",
+            recipient="0x1111111111111111111111111111111111111111",
+            amount=1.0,
+            contract="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            asset_symbol="RWS",
+        )
+        with self.assertRaisesRegex(PolicyError, "asset is disabled by policy"):
+            evaluate_transfer(req, cfg)
+
+    def test_social_login_requires_explicit_policy_opt_in(self):
+        req = TransferRequest(
+            chain="base",
+            recipient="0x2222222222222222222222222222222222222222",
+            amount=2.0,
+            contract="0x4200000000000000000000000000000000000006",
+            wallet_type="social",
+        )
+        with self.assertRaisesRegex(PolicyError, "social-login execution is disabled"):
+            evaluate_transfer(req, self.cfg)
+
     def test_audit_log_redacts_sensitive_fields(self):
         audit = {
             "chain": "eth",

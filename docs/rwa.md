@@ -49,6 +49,8 @@ When the user decides to trade (buy or sell an RWA stock on a chosen chain):
 
 Follow [swap.md](swap.md) for balance check, token risk check, quote, confirm, makeOrder, sign, send, and getOrderDetails. After a successful swap, call **rwa-get-user-ticker-selector** (with `--user-address`) or **rwa-get-my-holdings** to show the user’s updated RWA position.
 
+> Policy boundary: RWA execution inherits the same repository-wide preview-first policy gate as every swap. Only repository-verified assets/config from `rwa-get-config` should be enabled. `RWS` or any other newly referenced asset stays disabled by default until its metadata is explicitly configured in the local policy file.
+
 ## Python Script Commands (RWA)
 
 All commands are run via `python3 scripts/bitget-wallet-agent-api.py <command> ...`.

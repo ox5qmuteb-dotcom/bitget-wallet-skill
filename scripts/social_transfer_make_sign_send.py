@@ -35,6 +35,11 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import tx_policy
+
+
+DEFAULT_POLICY_FILE = SCRIPTS_DIR.parent / "security" / "policy.json"
+
 # Chain code → social-wallet chain param mapping (same as social_order_make_sign_send.py)
 _EVM_CHAIN_MAP = {
     "eth": "eth",
@@ -138,6 +143,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Social Login Wallet: makeTransferOrder + sign (TEE) + submitTransferOrder in one shot."
     )
+    parser.add_argument("--policy-file", default=str(DEFAULT_POLICY_FILE),
+                        help="Path to the local transaction policy JSON file.")
+    parser.add_argument("--preview-only", action="store_true",
+                        help="Validate policy and print preview payload + approval token without any network/sign step.")
+    parser.add_argument("--approval-token", default="",
+                        help="Preview approval token returned by --preview-only. Required for execution.")
     parser.add_argument("--wallet-id", dest="wallet_id", required=True,
                         help="Social Login Wallet walletId (from profile)")
     parser.add_argument("--chain", required=True,
@@ -160,6 +171,44 @@ def main():
                         help="[DANGEROUS] Overwrite an existing third-party EIP-7702 binding. "
                              "Script will prompt for confirmation before proceeding.")
     args = parser.parse_args()
+
+    preview_payload = tx_policy.build_preview_payload(
+        "transfer",
+        chain=args.chain,
+        to=args.to_address,
+        contract=args.contract,
+        amount=str(args.amount),
+        memo=args.memo,
+        gasless=bool(args.gasless),
+        gaslessPayToken=args.gasless_pay_token or "",
+        override7702=bool(args.override_7702),
+        walletType="social",
+    )
+    try:
+        cfg = tx_policy.load_policy_config(args.policy_file)
+        tx_policy.evaluate_transfer(
+            tx_policy.TransferRequest(
+                chain=args.chain,
+                recipient=args.to_address,
+                amount=float(args.amount),
+                contract=args.contract,
+                action="transfer",
+                wallet_type="social",
+                gasless=bool(args.gasless),
+                override_7702=bool(args.override_7702),
+                preview_payload=preview_payload if not args.preview_only else None,
+                approval_token=args.approval_token,
+                is_submit=not args.preview_only,
+            ),
+            cfg,
+        )
+        if args.preview_only:
+            tx_policy.append_audit_log(cfg, {"decision": "preview", "preview": preview_payload})
+            print(json.dumps(tx_policy.emit_preview(preview_payload), indent=2))
+            return
+    except tx_policy.PolicyError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
 
     # Import API module
     _api = importlib.import_module("bitget-wallet-agent-api")
@@ -234,6 +283,40 @@ def main():
     print(f"    orderId: {order_id}", file=sys.stderr)
     print(f"    chain: {data.get('chain')}, amount: {data.get('amount')}", file=sys.stderr)
 
+    actual_payload = tx_policy.build_preview_payload(
+        "transfer",
+        chain=data.get("chain"),
+        to=data.get("to"),
+        contract=data.get("contract", ""),
+        amount=str(data.get("amount")),
+        memo=data.get("memo", args.memo),
+        gasless=bool((data.get("noGas") or {}).get("available")),
+        gaslessPayToken=((data.get("noGas") or {}).get("payToken") or args.gasless_pay_token or ""),
+        override7702=bool(args.override_7702),
+        walletType="social",
+    )
+    try:
+        tx_policy.evaluate_transfer(
+            tx_policy.TransferRequest(
+                chain=data.get("chain") or args.chain,
+                recipient=data.get("to") or args.to_address,
+                amount=float(data.get("amount")),
+                contract=data.get("contract", ""),
+                action="transfer",
+                wallet_type="social",
+                gasless=bool((data.get("noGas") or {}).get("available")),
+                override_7702=bool(args.override_7702),
+                preview_payload=actual_payload,
+                approval_token=args.approval_token,
+                is_submit=True,
+            ),
+            cfg,
+        )
+    except (TypeError, ValueError, tx_policy.PolicyError) as exc:
+        print(f"DENY: preview mismatch before signing: {exc}", file=sys.stderr)
+        sys.exit(1)
+    tx_policy.append_audit_log(cfg, {"decision": "approved-for-sign", "orderId": order_id, "preview": actual_payload})
+
     # Check estimateRevert
     if data.get("estimateRevert"):
         print("ERROR: estimateRevert=true — transaction predicted to fail. Aborting.", file=sys.stderr)
@@ -246,21 +329,9 @@ def main():
         if no_gas_info.get("warn"):
             print(f"    WARNING: {no_gas_info['warn']}", file=sys.stderr)
     elif args.gasless:
-        # Gasless requested but not available (regardless of whether noGas field exists)
-        print("WARNING: Gasless requested but not available for this transfer.", file=sys.stderr)
-        print("Reason: amount below threshold, chain not supported, or no eligible pay token.", file=sys.stderr)
-        print("This will fall back to a STANDARD transfer (native gas required).", file=sys.stderr)
-        if not sys.stdin.isatty():
-            print("ERROR: Gasless fallback requires interactive confirmation (TTY). Aborting.", file=sys.stderr)
-            sys.exit(1)
-        try:
-            confirm = input("Type 'yes' to proceed with standard transfer, anything else to abort: ").strip()
-        except EOFError:
-            confirm = ""
-        if confirm != "yes":
-            print("Aborted — gasless not available and fallback not confirmed.", file=sys.stderr)
-            sys.exit(1)
-        print("    Proceeding with standard transfer (user confirmed).", file=sys.stderr)
+        print("DENY: gasless requested but unavailable; fail-closed policy blocks fallback to standard transfer.",
+              file=sys.stderr)
+        sys.exit(1)
 
     source = data.get("source", {})
     source_type = source.get("type", "")
@@ -289,8 +360,29 @@ def main():
         sys.exit(1)
 
     # Step 3: submitTransferOrder
+    try:
+        tx_policy.evaluate_transfer(
+            tx_policy.TransferRequest(
+                chain=data.get("chain") or args.chain,
+                recipient=data.get("to") or args.to_address,
+                amount=float(data.get("amount")),
+                contract=data.get("contract", ""),
+                action="transfer",
+                wallet_type="social",
+                gasless=bool((data.get("noGas") or {}).get("available")),
+                override_7702=bool(args.override_7702),
+                preview_payload=actual_payload,
+                approval_token=args.approval_token,
+                is_submit=True,
+            ),
+            cfg,
+        )
+    except (TypeError, ValueError, tx_policy.PolicyError) as exc:
+        print(f"DENY: preview mismatch before submission: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(">>> Step 3: submitTransferOrder", file=sys.stderr)
     submit_resp = _api.submit_transfer_order(order_id=order_id, sig=sig)
+    tx_policy.append_audit_log(cfg, {"decision": "submitted", "orderId": order_id, "sig": sig, "preview": actual_payload})
     print(json.dumps(submit_resp, indent=2))
 
     if submit_resp.get("status") != 0:

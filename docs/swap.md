@@ -118,19 +118,19 @@ Or with JSON stdin: `echo '{"list":[{"chain":"...","contract":"...","symbol":"..
 
 - **Script (EVM):** `python3 scripts/order_make_sign_send.py --private-key-file /tmp/.pk_evm --from-address <addr> --to-address <addr> --order-id <from_confirm> --from-chain ... --from-contract ... --from-symbol ... --to-chain ... --to-contract ... --to-symbol ... --from-amount ... --slippage ... --market ... --protocol ...`
 - **Script (Solana):** `python3 scripts/order_make_sign_send.py --private-key-file-sol /tmp/.pk_sol --from-address <sol_addr> --to-address <sol_addr> --order-id <from_confirm> --from-chain sol ...`
-- **Behavior:** Takes private key from secure storage, calls makeOrder, signs `data.txs`, fills `txs[].sig`, then sends. Auto-detects EVM vs Solana from makeOrder response. Never outputs private keys. Use this so the ~60s makeOrder expiry does not run out.
+- **Behavior:** Run `--preview-only` first to get an approval token, then rerun with `--approval-token`. The script calls makeOrder, rechecks the exact intent before signing, fills `txs[].sig`, rechecks before send, then submits. It never outputs private keys.
 
 **For Social Login Wallets:**
 
 - **Script:** `python3 scripts/social_order_make_sign_send.py --wallet-id <walletId> --order-id <from_confirm> --from-address <addr> --to-address <addr> --from-chain ... --from-contract ... --from-symbol ... --to-chain ... --to-contract ... --to-symbol ... --from-amount ... --slippage ... --market ... --protocol ...`
-- **Behavior:** Calls makeOrder, signs each tx via Bitget Wallet TEE API (no local private key), then sends. Auto-detects signing mode: EVM gasPayMaster (eth_sign hash), EVM regular tx, Solana, or Tron. Same ~60s window but signing is fast (single API call per tx).
+- **Behavior:** Run `--preview-only` first to get an approval token, then rerun with `--approval-token`. The script calls makeOrder, rechecks the exact intent before signing, signs each tx via Bitget Wallet TEE API (no local private key), rechecks before send, then submits.
 
 ### 3′–5′. makeOrder, sign, send (separate steps)
 
 Use only when not using the combined script (e.g. external signer, or key from secure storage like 1Password).
 
 - **makeOrder:** `bitget-wallet-agent-api.py make-order` with orderId, market, protocol, slippage from confirm. Response `data.txs` expires in ~60s.
-- **Sign:** Derive private key from mnemonic in secure storage. Write to a unique temp file programmatically (`tempfile.mkstemp`). Pass full makeOrder response to `order_sign.py` (stdin or `--order-json`) with `--private-key-file <path>`. The script reads the key, deletes the file, signs, and outputs an array of signature hex strings.
+- **Sign:** Derive private key from mnemonic in secure storage. Write to a unique temp file programmatically (`tempfile.mkstemp`). `order_sign.py` CLI is denied by default unless an external preview/policy gate has already run and explicitly re-enables standalone signing.
 - **Fill & send:** Set `data.txs[i].sig` from that array, then `bitget-wallet-agent-api.py send --json-stdin` or `--json-file` with body `{ "orderId": data.orderId, "txs": data.txs }`.
 
 ### 6. Query order (getOrderDetails)

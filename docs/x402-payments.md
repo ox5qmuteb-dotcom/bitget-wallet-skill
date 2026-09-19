@@ -13,10 +13,11 @@ x402 is an open standard for internet-native payments, built on HTTP 402 ("Payme
 2. Resource Server → 402 Payment Required
    Headers: payment-required: base64(PaymentRequired JSON)
 3. Agent decodes PaymentRequired, reads accepts[0] (amount, token, network, payTo, scheme)
-4. Agent signs EIP-3009 TransferWithAuthorization (EIP-712 typed data)
-5. Agent → POST /resource + PAYMENT-SIGNATURE: base64(PaymentPayload JSON)
-6. Resource Server → CDP Facilitator /verify → /settle → on-chain USDC transfer
-7. Resource Server → 200 OK + data + payment-response header (settlement receipt)
+4. Agent previews the exact payment intent and receives explicit approval through the repository policy gate
+5. Agent signs EIP-3009 TransferWithAuthorization (EIP-712 typed data)
+6. Agent → POST /resource + PAYMENT-SIGNATURE: base64(PaymentPayload JSON)
+7. Resource Server → CDP Facilitator /verify → /settle → on-chain USDC transfer
+8. Resource Server → 200 OK + data + payment-response header (settlement receipt)
 ```
 
 **Key insight:** The agent signs but never broadcasts. The Facilitator pays gas and submits on-chain. Agent is truly gasless.
@@ -201,15 +202,7 @@ Pinata offers x402-paid IPFS uploads. No registration needed.
 **Cost:** $0.001 USDC on Base
 **What you get:** A temporary upload URL for private IPFS storage
 
-```bash
-# Full end-to-end test using x402_pay.py
-python3 scripts/x402_pay.py pay \
-  --url "https://402.pinata.cloud/v1/pin/private?fileSize=100" \
-  --private-key <EVM_PRIVATE_KEY> \
-  --method POST \
-  --data '{"fileSize": 100}' \
-  --auto
-```
+> `scripts/x402_pay.py pay` is blocked by default because it signs and retries in one step. Use manual preview + explicit approval before any x402 signing/submission flow.
 
 **Expected output:**
 ```
@@ -237,5 +230,4 @@ Settlement: {
 4. Retries with `PAYMENT-SIGNATURE` header
 5. Pinata's facilitator verifies signature, settles on-chain
 6. Returns 200 + upload URL + settlement TX hash
-
 

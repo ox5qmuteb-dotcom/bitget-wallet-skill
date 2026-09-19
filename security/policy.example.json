@@ -1,0 +1,30 @@
+{
+  "enabled": true,
+  "mode": "preview-first",
+  "fail_closed": true,
+  "allowlist": {
+    "eth": ["0x1111111111111111111111111111111111111111"],
+    "base": ["0x2222222222222222222222222222222222222222"],
+    "sol": ["FhtA8m3q2V5M45gYtW9baK7Jj8UPdLQ4XcNf1fKrL3Qw"],
+    "eip155:8453": ["0x209693Bc6afc0C5328bA36FaF03C514EF312287C"]
+  },
+  "supported_assets": {
+    "eth": ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+    "base": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"],
+    "sol": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
+    "eip155:8453": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"]
+  },
+  "disabled_assets": ["rws"],
+  "allow_native_transfer": false,
+  "allow_gasless": false,
+  "allow_swap": false,
+  "allow_bridge": false,
+  "allow_social_login": false,
+  "allow_override_7702": false,
+  "allow_approve": false,
+  "allow_permit": false,
+  "per_tx_limit": 100.0,
+  "daily_limit": 500.0,
+  "session_limit": 200.0,
+  "audit_log_path": "./security/audit.log"
+}
