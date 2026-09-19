@@ -233,7 +233,7 @@ Structured JSON → Agent interprets → Natural language response
 
 - `scripts/monitoring.py` provides an extensible provider/adapter layer for `evm_rpc`, `solana_rpc`, `bitget_price`, and test `static` providers
 - JSON status includes: asset type, symbol, identifier, network, chain, public wallet address (when applicable), balance, approximate value, recent history, last activity, last transaction, inactivity duration, and last update time
-- Internal API endpoints: `GET /healthz`, `GET /status`, `GET /totals`, and `GET /alerts`
+- Internal API endpoints: `GET /healthz`, `GET /status`, `GET /totals`, and `GET /alerts` (localhost access only)
 - Alert rules support inactivity, low/high balance, large last transaction, and large total value using `Decimal`-safe comparisons
 - Configuration supports both general `assets` entries and legacy wallet-style entries, and can be supplied with `config/monitoring.example.json` plus `.env.example`
 - The monitoring flow is **read-only** and does **not** sign or execute transactions

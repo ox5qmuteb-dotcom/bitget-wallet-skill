@@ -318,6 +318,33 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(result["snapshots"][0]["identifier"], "GOLD")
         self.assertEqual(result["aggregates"]["totals_by_quote_currency"]["USD"], "7500")
 
+    def test_assets_and_wallets_are_merged_during_config_migration(self):
+        config = MonitorConfig.from_mapping(
+            {
+                "providers": [{"name": "static-assets", "type": "static", "options": {}}],
+                "assets": [
+                    {
+                        "name": "Gold Reserve",
+                        "asset_type": "commodity",
+                        "symbol": "XAU",
+                        "identifier": "gold-reserve",
+                        "provider": "static-assets",
+                    }
+                ],
+                "wallets": [
+                    {
+                        "name": "Treasury ETH",
+                        "network": "Ethereum",
+                        "chain": "eth",
+                        "token": "ETH",
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "provider": "static-assets",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(len(config.wallets), 2)
+
     def test_service_captures_provider_failure(self):
         config = MonitorConfig.from_mapping(
             {

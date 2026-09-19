@@ -13,6 +13,7 @@
   - `GET /status`
   - `GET /totals`
   - `GET /alerts`
+- The internal HTTP API serves **localhost callers only** by default.
 - Example commands:
 
 ```bash
@@ -41,6 +42,7 @@ python3 scripts/monitoring.py serve --config /absolute/path/to/config/monitoring
   - `GET /status`
   - `GET /totals`
   - `GET /alerts`
+- واجهة HTTP الداخلية تسمح بطلبات **localhost فقط** بشكل افتراضي.
 - أمثلة التشغيل:
 
 ```bash

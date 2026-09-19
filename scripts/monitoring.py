@@ -341,9 +341,9 @@ class WalletAssetConfig:
             if not validate_public_address(chain, address):
                 raise ConfigError(f"invalid public address for {chain}: {address}")
         contract = str(data.get("contract") or "").strip()
-        if contract and chain not in EVM_CHAINS and chain not in SOLANA_CHAINS:
+        if asset_type == "crypto" and contract and chain not in EVM_CHAINS and chain not in SOLANA_CHAINS:
             raise ConfigError(f"contracts are only supported for EVM and Solana chains, got: {chain}")
-        if contract and not validate_public_address(chain, contract):
+        if asset_type == "crypto" and contract and not validate_public_address(chain, contract):
             raise ConfigError(f"invalid contract address for {chain}: {contract}")
         return cls(
             name=str(data["name"]).strip(),
@@ -372,9 +372,8 @@ class MonitorConfig:
     def from_mapping(cls, data: Mapping[str, Any]) -> "MonitorConfig":
         ensure_no_plaintext_secrets(data)
         providers = [ProviderConfig.from_mapping(item) for item in data.get("providers", [])]
-        targets_raw = data.get("assets")
-        if targets_raw is None:
-            targets_raw = data.get("wallets", [])
+        targets_raw = list(data.get("assets", []) or [])
+        targets_raw.extend(list(data.get("wallets", []) or []))
         wallets = [WalletAssetConfig.from_mapping(item) for item in targets_raw]
         if not providers:
             raise ConfigError("monitoring config requires at least one provider")
@@ -633,7 +632,10 @@ class SolanaRpcProviderAdapter(ProviderAdapter):
                     total += parse_decimal(raw, field_name="uiAmountString")
                 else:
                     amount = parse_decimal(amount_info.get("amount", "0"), field_name="amount")
-                    decimals = int(amount_info.get("decimals", 0))
+                    try:
+                        decimals = int(amount_info.get("decimals", 0))
+                    except (TypeError, ValueError) as exc:
+                        raise ProviderError(f"{self.config.name} invalid token decimals in RPC response") from exc
                     total += quantize_decimal(amount, decimals)
             balance = total
         else:
@@ -667,6 +669,8 @@ class SolanaRpcProviderAdapter(ProviderAdapter):
 
 
 class BitgetPriceProviderAdapter(ProviderAdapter):
+    """Bitget price adapter using the public agent API checksum and compatibility headers."""
+
     def _make_request_checksum(self, path: str, body_str: str, timestamp_ms: str) -> str:
         digest = hashlib.sha256(f"POST{path}{body_str}{timestamp_ms}".encode("utf-8")).hexdigest()
         return "0x" + digest
@@ -910,6 +914,10 @@ class MonitoringService:
 class MonitoringRequestHandler(BaseHTTPRequestHandler):
     server_version = "BGWMonitoring/1.0"
 
+    def _is_local_request(self) -> bool:
+        host = (self.client_address[0] or "").strip()
+        return host in {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"}
+
     def _send_json(self, code: int, payload: Mapping[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(code)
@@ -923,6 +931,9 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
         service = getattr(self.server, "monitoring_service", None)
         if service is None:
             self._send_json(500, {"status": "error", "error": "monitoring service not attached"})
+            return
+        if not self._is_local_request():
+            self._send_json(403, {"status": "forbidden", "error": "monitoring api is restricted to local callers"})
             return
         query = parse_qs(parsed.query)
         refresh = query.get("refresh", ["0"])[0] == "1"
