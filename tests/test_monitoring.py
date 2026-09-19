@@ -135,6 +135,23 @@ class MonitoringTests(unittest.TestCase):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": 0})
         with self.assertRaises(ConfigError):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "retries": -1})
+        with self.assertRaises(ConfigError):
+            MonitorConfig.from_mapping(
+                {
+                    "providers": [{"name": "static-balance", "type": "static", "options": {}}],
+                    "wallets": [
+                        {
+                            "name": "ETH Wallet",
+                            "network": "Ethereum",
+                            "chain": "eth",
+                            "token": "ETH",
+                            "address": "0x1111111111111111111111111111111111111111",
+                            "provider": "static-balance",
+                            "alerts": {"inactivity_seconds": 1.9},
+                        }
+                    ],
+                }
+            )
 
     def test_build_alerts_for_inactivity_balance_and_large_values(self):
         now = datetime.now(timezone.utc)
@@ -296,6 +313,32 @@ class MonitoringTests(unittest.TestCase):
         )
         self.assertEqual(snapshot.balance, Decimal("1"))
         self.assertEqual(snapshot.metadata["transaction_count"], "42")
+
+    def test_evm_rpc_uses_configured_decimals_without_extra_rpc_call(self):
+        transport = FakeTransport(
+            [
+                {"result": "0x0f4240"},
+                {"result": "0x2a"},
+            ]
+        )
+        adapter = EvmRpcProviderAdapter(
+            ProviderConfig(name="evm", type="evm_rpc", rpc_url="https://rpc.example"),
+            transport=transport,
+        )
+        snapshot = adapter.fetch_wallet_asset(
+            WalletAssetConfig(
+                name="USDC",
+                network="Base",
+                chain="base",
+                token="USDC",
+                address="0x1111111111111111111111111111111111111111",
+                provider="evm",
+                contract="0x2222222222222222222222222222222222222222",
+                metadata={"decimals": 6},
+            )
+        )
+        self.assertEqual(snapshot.balance, Decimal("1"))
+        self.assertEqual(len(transport.calls), 2)
 
     def test_solana_rpc_uses_last_signature_for_inactivity(self):
         transport = FakeTransport(

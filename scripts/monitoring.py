@@ -114,6 +114,20 @@ def parse_decimal(value: Any, *, field_name: str = "value") -> Decimal:
     return parsed
 
 
+def parse_non_negative_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(f"{field_name} must be an integer")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+    else:
+        raise ConfigError(f"{field_name} must be an integer")
+    if parsed < 0:
+        raise ConfigError(f"{field_name} must be zero or greater")
+    return parsed
+
+
 def quantize_decimal(value: Decimal, decimals: int) -> Decimal:
     scale = Decimal(10) ** max(decimals, 0)
     return value / scale
@@ -196,9 +210,7 @@ class AlertRuleConfig:
                 raise ConfigError(f"{field} must be zero or greater")
             return parsed
 
-        inactivity_seconds = int(data["inactivity_seconds"]) if data.get("inactivity_seconds") is not None else None
-        if inactivity_seconds is not None and inactivity_seconds < 0:
-            raise ConfigError("inactivity_seconds must be zero or greater")
+        inactivity_seconds = parse_non_negative_int(data["inactivity_seconds"], field_name="inactivity_seconds") if data.get("inactivity_seconds") is not None else None
         return cls(
             inactivity_seconds=inactivity_seconds,
             min_balance=_non_negative_decimal("min_balance"),
@@ -237,11 +249,9 @@ class ProviderConfig:
         if not name or not kind:
             raise ConfigError("each provider needs name and type")
         timeout_seconds = float(data.get("timeout_seconds", 10.0))
-        retries = int(data.get("retries", 2))
+        retries = parse_non_negative_int(data.get("retries", 2), field_name="retries")
         if timeout_seconds <= 0:
             raise ConfigError("timeout_seconds must be greater than zero")
-        if retries < 0:
-            raise ConfigError("retries must be zero or greater")
         return cls(
             name=name,
             type=kind,
@@ -292,6 +302,8 @@ class WalletAssetConfig:
         if not validate_public_address(chain, address):
             raise ConfigError(f"invalid public address for {chain}: {address}")
         contract = str(data.get("contract") or "").strip()
+        if contract and chain not in EVM_CHAINS and chain not in SOLANA_CHAINS:
+            raise ConfigError(f"contracts are only supported for EVM and Solana chains, got: {chain}")
         if contract and not validate_public_address(chain, contract):
             raise ConfigError(f"invalid contract address for {chain}: {contract}")
         return cls(
