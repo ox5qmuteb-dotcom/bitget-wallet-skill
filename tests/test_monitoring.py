@@ -56,6 +56,7 @@ class MonitoringTests(unittest.TestCase):
     def test_parse_decimal_rejects_bad_format_and_handles_large_values(self):
         value = parse_decimal("123456789012345678901234567890.000001", field_name="balance")
         self.assertEqual(value, Decimal("123456789012345678901234567890.000001"))
+        self.assertEqual(parse_decimal(1.5, field_name="balance"), Decimal("1.5"))
         with self.assertRaises(ConfigError):
             parse_decimal("NaN", field_name="balance")
         with self.assertRaises(ConfigError):
@@ -144,6 +145,8 @@ class MonitoringTests(unittest.TestCase):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": 0})
         with self.assertRaises(ConfigError):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": "abc"})
+        with self.assertRaises(ConfigError):
+            ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": float("inf")})
         with self.assertRaises(ConfigError):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "retries": -1})
         with self.assertRaises(ConfigError):

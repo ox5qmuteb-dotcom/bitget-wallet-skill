@@ -12,6 +12,7 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import math
 import os
 from threading import RLock
 import time
@@ -94,6 +95,10 @@ def format_iso_datetime(value: Optional[datetime]) -> Optional[str]:
 def parse_decimal(value: Any, *, field_name: str = "value") -> Decimal:
     if isinstance(value, Decimal):
         candidate = str(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise ConfigError(f"{field_name} must be finite")
+        candidate = repr(value)
     elif isinstance(value, int):
         candidate = str(value)
     elif isinstance(value, str):
@@ -266,7 +271,7 @@ class ProviderConfig:
         except (TypeError, ValueError) as exc:
             raise ConfigError("timeout_seconds must be a number greater than zero") from exc
         retries = parse_non_negative_int(data.get("retries", 2), field_name="retries")
-        if timeout_seconds <= 0:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ConfigError("timeout_seconds must be greater than zero")
         return cls(
             name=name,
@@ -819,7 +824,7 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"status": "not_found", "path": parsed.path})
         emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=404, refresh=refresh)
 
-    def log_message(self, format: str, *args: Any) -> None:
+    def log_message(self, fmt: str, *args: Any) -> None:
         return
 
 
