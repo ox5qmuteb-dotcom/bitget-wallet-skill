@@ -44,6 +44,14 @@ class FakeTransport(HttpTransport):
         return response
 
 
+class FakeJsonErrorResponse:
+    status_code = 200
+    text = "not-json"
+
+    def json(self):
+        raise ValueError("bad json")
+
+
 class MonitoringTests(unittest.TestCase):
     def test_parse_decimal_rejects_bad_format_and_handles_large_values(self):
         value = parse_decimal("123456789012345678901234567890.000001", field_name="balance")
@@ -384,6 +392,62 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(snapshot.last_transaction_hash, "sig-1")
         self.assertIsNotNone(snapshot.inactivity_seconds)
 
+    def test_solana_rpc_parses_token_accounts(self):
+        transport = FakeTransport(
+            [
+                {
+                    "result": {
+                        "value": [
+                            {
+                                "account": {
+                                    "data": {
+                                        "parsed": {
+                                            "info": {
+                                                "tokenAmount": {
+                                                    "uiAmountString": "1.25"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "account": {
+                                    "data": {
+                                        "parsed": {
+                                            "info": {
+                                                "tokenAmount": {
+                                                    "amount": "250",
+                                                    "decimals": 2
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                {"result": []},
+            ]
+        )
+        adapter = SolanaRpcProviderAdapter(
+            ProviderConfig(name="sol", type="solana_rpc", rpc_url="https://sol.example"),
+            transport=transport,
+        )
+        snapshot = adapter.fetch_wallet_asset(
+            WalletAssetConfig(
+                name="USDC",
+                network="Solana",
+                chain="sol",
+                token="USDC",
+                address="11111111111111111111111111111111",
+                provider="sol",
+                contract="So11111111111111111111111111111111111111112",
+            )
+        )
+        self.assertEqual(snapshot.balance, Decimal("3.75"))
+
     def test_rpc_failure_is_reported(self):
         transport = FakeTransport([ProviderError("timeout calling rpc")])
         adapter = SolanaRpcProviderAdapter(
@@ -401,6 +465,15 @@ class MonitoringTests(unittest.TestCase):
                     provider="sol",
                 )
             )
+
+    def test_http_transport_wraps_invalid_json(self):
+        class FakeSession:
+            def request(self, **kwargs):
+                return FakeJsonErrorResponse()
+
+        transport = HttpTransport(session=FakeSession())
+        with self.assertRaises(ProviderError):
+            transport.request_json("POST", "https://rpc.example", json_body={"jsonrpc": "2.0"})
 
     def test_http_endpoints_return_status_and_health(self):
         config = MonitorConfig.from_mapping(

@@ -44,6 +44,7 @@ SENSITIVE_LOG_KEYS = SENSITIVE_CONFIG_KEYS | {
 EVM_CHAINS = {"eth", "ethereum", "base", "bnb", "bsc", "arbitrum", "arb", "optimism", "op", "polygon", "matic"}
 SOLANA_CHAINS = {"sol", "solana"}
 BASE58_ALPHABET = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+BASE58_INDEX = {char: index for index, char in enumerate("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")}
 BITGET_BASE_URL = "https://copenapi.bgwapi.io"
 
 
@@ -147,8 +148,20 @@ def validate_public_address(chain: str, address: str) -> bool:
     if normalized_chain in EVM_CHAINS:
         return len(candidate) == 42 and candidate.startswith("0x") and all(ch in "0123456789abcdefABCDEF" for ch in candidate[2:])
     if normalized_chain in SOLANA_CHAINS:
-        return 32 <= len(candidate) <= 48 and all(ch in BASE58_ALPHABET for ch in candidate)
+        return _is_valid_solana_public_key(candidate)
     return bool(candidate)
+
+
+def _is_valid_solana_public_key(candidate: str) -> bool:
+    if not candidate or any(ch not in BASE58_ALPHABET for ch in candidate):
+        return False
+    number = 0
+    for char in candidate:
+        number = number * 58 + BASE58_INDEX[char]
+    decoded = number.to_bytes(max(1, (number.bit_length() + 7) // 8), "big")
+    leading_zeroes = len(candidate) - len(candidate.lstrip("1"))
+    full = (b"\x00" * leading_zeroes) + (b"" if number == 0 and leading_zeroes else decoded)
+    return len(full) == 32
 
 
 def _normalize_key(name: str) -> str:
@@ -434,7 +447,10 @@ class HttpTransport:
                     raise RetryableProviderError(f"http {response.status_code}: {response.text[:200]}")
                 if response.status_code >= 400:
                     raise ProviderError(f"http {response.status_code}: {response.text[:200]}")
-                return response.json()
+                try:
+                    return response.json()
+                except ValueError as exc:
+                    raise ProviderError(f"invalid JSON response from {url}") from exc
             except RetryableProviderError as exc:
                 last_error = exc
             except requests.Timeout as exc:
