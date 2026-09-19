@@ -12,6 +12,8 @@ wallet/
 .social-wallet-secret
 .mnemonic
 .pk_*
+.env
+.env.local
 node_modules/
 package.json
 package-lock.json
