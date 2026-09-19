@@ -155,18 +155,33 @@ transfer_make_sign_send.py / social_transfer_make_sign_send.py
 - **Gasless (EIP-7702 / FeePayer)** — transfer tokens with zero native gas. Gas deducted from USDT/USDC balance
 - **Multi-chain** — ETH, BNB, Base, Arbitrum, Polygon, Morph, Solana
 - **Server-side broadcast** — client only signs, server handles nonce management and chain tracking
-- **Explicit fallback** — if gasless is unavailable, prompts for confirmation before falling back to standard transfer
+- **Preview-first policy gate** — one-shot scripts now default to dry-run preview and emit an approval token for the exact request
+- **No silent fallback** — if gasless is unavailable, the script aborts; rerun without `--gasless` after a new preview if you explicitly want a standard transfer
+
+**Security activation (breaking change):**
+1. Copy `security/policy.example.json` to `security/policy.json` and edit the allowlists + limits.
+2. Run the script once **without** `--confirm` to get a preview + `approvalToken`.
+3. Re-run the exact same command with `--confirm --approval-token <token>` to sign and submit.
+4. Without an enabled policy file, fund-moving scripts are **deny-by-default**.
 
 ```bash
-# Standard EVM token transfer
+# 1) Preview-only (default)
 python3 scripts/transfer_make_sign_send.py --private-key-file /tmp/.pk_evm \
   --chain eth --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
-  --from-address 0xAbC... --to-address 0xDeF... --amount 100
+  --from-address 0xAbC... --to-address 0xDeF... --amount 100 \
+  --policy-file security/policy.json
 
-# Gasless transfer (no ETH needed for gas)
+# 2) Execute the exact approved preview
+python3 scripts/transfer_make_sign_send.py --private-key-file /tmp/.pk_evm \
+  --chain eth --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --from-address 0xAbC... --to-address 0xDeF... --amount 100 \
+  --policy-file security/policy.json --confirm --approval-token <token>
+
+# Gasless preview (execution uses the same confirm/token pattern)
 python3 scripts/transfer_make_sign_send.py --private-key-file /tmp/.pk_evm \
   --chain base --contract 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
-  --from-address 0xAbC... --to-address 0xDeF... --amount 50 --gasless
+  --from-address 0xAbC... --to-address 0xDeF... --amount 50 --gasless \
+  --policy-file security/policy.json
 
 # Poll status
 python3 scripts/bitget-wallet-agent-api.py get-transfer-order --order-id <orderId>
@@ -198,6 +213,7 @@ Structured JSON → Agent interprets → Natural language response
 - No API key or HMAC signing needed — uses token-based authentication
 - Swap calldata generates transaction data; signing requires explicit wallet key access
 - **Wallet key management:** mnemonic stored in secure storage, private keys derived on-the-fly and discarded after each signing operation (never persisted)
+- **Deny-by-default execution policy:** no swap/transfer signing or submission without an enabled local policy, matching preview token, and allowlisted chains/addresses/contracts
 
 ---
 

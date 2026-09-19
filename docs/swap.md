@@ -13,8 +13,8 @@ This document describes the **Swap flow**: use `scripts/bitget-wallet-agent-api.
 | 0 | `bitget-wallet-agent-api.py check-swap-token` | Check fromToken and toToken for risks **before** quote; if risks or forbidden-buy on toToken, prompt user or stop. |
 | 1 | `bitget-wallet-agent-api.py quote` | First quote; returns multiple markets in `data.quoteResults`. Agent shows **all** results, recommends the first; user may choose another for confirm. |
 | 2 | `bitget-wallet-agent-api.py confirm` | Second quote; use market/protocol/slippage from **chosen** quote result (default first); Get latest quoteResult and orderId. The agent should display the `data.quoteResult`. If the `data.tips` are not empty, agent should display and remind user |
-| 3+4+5 | **`order_make_sign_send.py`** (mnemonic/private-key wallets) | makeOrder + sign + send in one run |
-| 3+4+5 | **`social_order_make_sign_send.py`** (Social Login Wallet) | makeOrder + sign (TEE) + send in one run |
+| 3+4+5 | **`order_make_sign_send.py`** (mnemonic/private-key wallets) | Preview-first: dry-run by default, then makeOrder + sign + send only with `--confirm --approval-token` |
+| 3+4+5 | **`social_order_make_sign_send.py`** (Social Login Wallet) | Preview-first Social Login flow: dry-run by default, then makeOrder + sign (TEE) + send only with `--confirm --approval-token` |
 | 3′ | `bitget-wallet-agent-api.py make-order` | Create order; returns unsigned data.txs (~60s expiry) |
 | 4′ | `order_sign.py` + fill `txs[].sig` | Sign data.txs with private key (derived from mnemonic, discarded after) |
 | 5′ | `bitget-wallet-agent-api.py send` | Submit signed order (body: orderId + txs) |
@@ -116,14 +116,14 @@ Or with JSON stdin: `echo '{"list":[{"chain":"...","contract":"...","symbol":"..
 
 **For mnemonic/private-key wallets:**
 
-- **Script (EVM):** `python3 scripts/order_make_sign_send.py --private-key-file /tmp/.pk_evm --from-address <addr> --to-address <addr> --order-id <from_confirm> --from-chain ... --from-contract ... --from-symbol ... --to-chain ... --to-contract ... --to-symbol ... --from-amount ... --slippage ... --market ... --protocol ...`
-- **Script (Solana):** `python3 scripts/order_make_sign_send.py --private-key-file-sol /tmp/.pk_sol --from-address <sol_addr> --to-address <sol_addr> --order-id <from_confirm> --from-chain sol ...`
-- **Behavior:** Takes private key from secure storage, calls makeOrder, signs `data.txs`, fills `txs[].sig`, then sends. Auto-detects EVM vs Solana from makeOrder response. Never outputs private keys. Use this so the ~60s makeOrder expiry does not run out.
+- **Script (preview):** `python3 scripts/order_make_sign_send.py --private-key-file /tmp/.pk_evm --from-address <addr> --to-address <addr> --order-id <from_confirm> --from-chain ... --from-contract ... --from-symbol ... --to-chain ... --to-contract ... --to-symbol ... --from-amount ... --slippage ... --market ... --protocol ... --policy-file security/policy.json`
+- **Script (execute approved preview):** same command plus `--confirm --approval-token <token>`
+- **Behavior:** The first run validates policy + limits and emits a preview token. The second run must match exactly, then it calls makeOrder, signs `data.txs`, fills `txs[].sig`, and sends. Auto-detects EVM vs Solana from makeOrder response. Never outputs private keys.
 
 **For Social Login Wallets:**
 
-- **Script:** `python3 scripts/social_order_make_sign_send.py --wallet-id <walletId> --order-id <from_confirm> --from-address <addr> --to-address <addr> --from-chain ... --from-contract ... --from-symbol ... --to-chain ... --to-contract ... --to-symbol ... --from-amount ... --slippage ... --market ... --protocol ...`
-- **Behavior:** Calls makeOrder, signs each tx via Bitget Wallet TEE API (no local private key), then sends. Auto-detects signing mode: EVM gasPayMaster (eth_sign hash), EVM regular tx, Solana, or Tron. Same ~60s window but signing is fast (single API call per tx).
+- **Script:** `python3 scripts/social_order_make_sign_send.py --wallet-id <walletId> --order-id <from_confirm> --from-address <addr> --to-address <addr> --from-chain ... --from-contract ... --from-symbol ... --to-chain ... --to-contract ... --to-symbol ... --from-amount ... --slippage ... --market ... --protocol ... --policy-file security/policy.json`
+- **Behavior:** First run = preview only. Second matching run with `--confirm --approval-token <token>` calls makeOrder, signs each tx via Bitget Wallet TEE API (no local private key), then sends. Auto-detects signing mode: EVM gasPayMaster (eth_sign hash), EVM regular tx, Solana, or Tron.
 
 ### 3′–5′. makeOrder, sign, send (separate steps)
 
@@ -158,7 +158,7 @@ Recommended flow:
 5. confirm → use market/protocol/slippage from the chosen quote result (default first); get and show latest quoteResult(data.quoteResult), orderId(data.orderId) and gasFee(data.gasFee); also show tips(data.tips) if not empty
 6. PRESENT → show confirmation summary (required)
 7. WAIT → user explicitly confirms
-8. **Mnemonic/private-key wallets:** `order_make_sign_send.py`. **Social Login Wallet:** `social_order_make_sign_send.py --wallet-id <walletId>`. Both complete makeOrder+sign+send within ~60s.
+8. **Mnemonic/private-key wallets:** `order_make_sign_send.py` preview, then re-run with `--confirm --approval-token`. **Social Login Wallet:** same pattern with `social_order_make_sign_send.py --wallet-id <walletId>`.
 9. get-order-details → show final status and txId / explorer link
 ```
 

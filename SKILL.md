@@ -149,8 +149,8 @@ Full domain knowledge in [`docs/address-find.md`](docs/address-find.md).
 
 | Use Case | Command / Script | Description |
 |----------|-----------------|-------------|
-| Transfer (mnemonic/private-key) | `transfer_make_sign_send.py` | makeTransferOrder + sign + submit in one run |
-| Transfer (Social Login Wallet) | `social_transfer_make_sign_send.py` | makeTransferOrder + sign (TEE) + submit. No local key needed. |
+| Transfer (mnemonic/private-key) | `transfer_make_sign_send.py` | Preview-first transfer flow. Default run is dry-run; execution requires `--confirm --approval-token`. |
+| Transfer (Social Login Wallet) | `social_transfer_make_sign_send.py` | Preview-first Social Login transfer flow. Default run is dry-run; execution requires `--confirm --approval-token`. |
 | Poll status | `get-transfer-order` | Real-time chain query for order status |
 
 **Supported chains:** eth, bnb, base, arbitrum, matic, morph, sol
@@ -163,7 +163,7 @@ Full domain knowledge in [`docs/address-find.md`](docs/address-find.md).
 - Solana blockhash expires in ~60s — use `transfer_make_sign_send.py` to avoid expiry
 - orderId is single-use; do not resubmit after successful submit
 - Gasless `txid` may be `getgas_task_xxx` format (not final chain hash); poll `get-transfer-order` for final status
-- **EIP-7702 override is DANGEROUS**: NEVER pass `--override-7702` without first warning the user that it permanently replaces their existing third-party EIP-7702 binding. If API returns error 30108, explain the risk and get explicit user confirmation before retrying with `--override-7702`
+- **EIP-7702 override is DANGEROUS**: NEVER pass `--override-7702` unless the local policy explicitly enables it, the user has been warned that it permanently replaces any existing third-party binding, and a fresh matching preview is approved
 
 Full domain knowledge in [`docs/transfer.md`](docs/transfer.md).
 
@@ -351,10 +351,10 @@ Use empty string `""` for native token contract (ETH, SOL, BNB, etc.).
 | Script | Purpose | Key commands |
 |--------|---------|-------------|
 | `bitget-wallet-agent-api.py` | Unified API client | Balance, token find (launchpad-tokens/search-tokens-v3/rankings), token check (security/coin-dev/coin-market-info/kline/tx-info), token analyze (simple-kline/trading-dynamics/transaction-list/holders-info/profit-address-analysis/top-profit/compare-tokens), address find (recommend-address-list), swap flow (quote→confirm→make-order→send→get-order-details) |
-| `order_make_sign_send.py` | One-shot swap execution (mnemonic/private-key) | makeOrder + sign + send in one run. `--private-key-file` (EVM) or `--private-key-file-sol` (Solana). Avoids 60s expiry. |
-| `transfer_make_sign_send.py` | One-shot token transfer (mnemonic/private-key) | makeTransferOrder + sign + submit in one run. `--private-key-file` (EVM) or `--private-key-file-sol` (Solana). `--gasless` for gasless mode. |
-| `social_transfer_make_sign_send.py` | One-shot token transfer (Social Login Wallet) | makeTransferOrder + sign (TEE) + submit in one run. `--wallet-id` required. No local private key needed. `--gasless` for gasless mode. |
-| `social_order_make_sign_send.py` | One-shot swap execution (Social Login Wallet) | makeOrder + sign (TEE) + send in one run. `--wallet-id` required. No local private key needed. |
+| `order_make_sign_send.py` | Swap execution (mnemonic/private-key) | Preview-first. Default run emits an approval token; execution requires `--confirm --approval-token`. |
+| `transfer_make_sign_send.py` | Token transfer (mnemonic/private-key) | Preview-first. Default run emits an approval token; execution requires `--confirm --approval-token`. `--gasless` aborts if unavailable. |
+| `social_transfer_make_sign_send.py` | Token transfer (Social Login Wallet) | Preview-first Social Login transfer flow. `--wallet-id` required. Execution requires `--confirm --approval-token`. |
+| `social_order_make_sign_send.py` | Swap execution (Social Login Wallet) | Preview-first Social Login swap flow. `--wallet-id` required. Execution requires `--confirm --approval-token`. |
 | `order_sign.py` | Sign makeOrder data | Outputs JSON array of signatures. Supports raw tx, EVM gasPayMaster (eth_sign), EIP-712, Solana Ed25519, Solana gasPayMaster. |
 | `x402_pay.py` | x402 payment | EIP-3009 signing, Solana partial-sign, HTTP 402 pay flow |
 | `social-wallet.py` | Social Login Wallet | Sign transactions/messages via Bitget Wallet TEE (no local private key needed) |

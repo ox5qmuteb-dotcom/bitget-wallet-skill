@@ -43,6 +43,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import tx_policy
+
 
 def _sign_evm_standard(source: dict, private_key: str) -> str:
     """
@@ -175,7 +177,37 @@ def main():
     parser.add_argument("--override-7702", dest="override_7702", action="store_true",
                         help="[DANGEROUS] Overwrite an existing third-party EIP-7702 binding. "
                              "Script will prompt for confirmation before proceeding.")
+    parser.add_argument("--confirm", action="store_true",
+                        help="Execute after a matching preview was approved.")
+    parser.add_argument("--approval-token", default="",
+                        help="Approval token returned by preview mode. Required with --confirm.")
+    parser.add_argument("--policy-file", default=None,
+                        help="Path to the JSON security policy file. Defaults to security/policy.json.")
     args = parser.parse_args()
+
+    policy_ctx = tx_policy.load_policy_context(args.policy_file)
+    intent = {
+        "operation": "transfer",
+        "walletMode": "local",
+        "chain": args.chain,
+        "contract": args.contract or "",
+        "from": args.from_address,
+        "to": args.to_address,
+        "amount": args.amount,
+        "memo": args.memo,
+        "gasless": args.gasless,
+        "gaslessPayToken": args.gasless_pay_token or "",
+        "override7702": args.override_7702,
+    }
+    try:
+        if not args.confirm:
+            print(json.dumps(tx_policy.issue_preview(policy_ctx, intent), indent=2))
+            return
+        approved_intent = tx_policy.require_approval(policy_ctx, intent, args.approval_token)
+    except tx_policy.PolicyError as exc:
+        tx_policy.deny_and_log(policy_ctx, intent, str(exc))
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc)}, indent=2), file=sys.stderr)
+        sys.exit(1)
 
     # Read keys from files
     from key_utils import read_key_file
@@ -191,24 +223,8 @@ def main():
     # Import API module
     _api = importlib.import_module("bitget-wallet-agent-api")
 
-    # EIP-7702 override pre-flight confirmation (before API call)
     if args.override_7702:
-        print("", file=sys.stderr)
-        print("⚠️  EIP-7702 OVERRIDE WARNING", file=sys.stderr)
-        print("This will OVERWRITE the existing third-party EIP-7702 binding on this address.", file=sys.stderr)
-        print("This is a permanent account-level change. The previous binding cannot be restored.", file=sys.stderr)
-        print("", file=sys.stderr)
-        if not sys.stdin.isatty():
-            print("ERROR: --override-7702 requires interactive confirmation (TTY). Aborting.", file=sys.stderr)
-            sys.exit(1)
-        try:
-            confirm = input("Type 'yes' to confirm override, anything else to abort: ").strip()
-        except EOFError:
-            confirm = ""
-        if confirm != "yes":
-            print("Aborted — 7702 override not confirmed.", file=sys.stderr)
-            sys.exit(1)
-        print("    7702 override confirmed by user.", file=sys.stderr)
+        print("⚠️  EIP-7702 OVERRIDE WARNING: this permanently replaces any existing third-party binding.", file=sys.stderr)
 
     # Step 1: makeTransferOrder
     print(">>> Step 1: makeTransferOrder", file=sys.stderr)
@@ -250,6 +266,12 @@ def main():
     print(f"    orderId: {order_id}", file=sys.stderr)
     print(f"    chain: {data.get('chain')}, from: {data.get('from')}, to: {data.get('to')}", file=sys.stderr)
     print(f"    amount: {data.get('amount')}, contract: {data.get('contract')}", file=sys.stderr)
+    try:
+        tx_policy.inspect_transfer_response(policy_ctx, approved_intent, data)
+    except tx_policy.PolicyError as exc:
+        tx_policy.deny_and_log(policy_ctx, approved_intent, str(exc), order_id=order_id)
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc), "orderId": order_id}, indent=2), file=sys.stderr)
+        sys.exit(1)
 
     # Check estimateRevert
     if data.get("estimateRevert"):
@@ -268,22 +290,6 @@ def main():
               file=sys.stderr)
         if no_gas_info.get("warn"):
             print(f"    WARNING: {no_gas_info['warn']}", file=sys.stderr)
-    elif args.gasless:
-        # Gasless requested but not available (regardless of whether noGas field exists)
-        print("WARNING: Gasless requested but not available for this transfer.", file=sys.stderr)
-        print("Reason: amount below threshold, chain not supported, or no eligible pay token.", file=sys.stderr)
-        print("This will fall back to a STANDARD transfer (native gas required).", file=sys.stderr)
-        if not sys.stdin.isatty():
-            print("ERROR: Gasless fallback requires interactive confirmation (TTY). Aborting.", file=sys.stderr)
-            sys.exit(1)
-        try:
-            confirm = input("Type 'yes' to proceed with standard transfer, anything else to abort: ").strip()
-        except EOFError:
-            confirm = ""
-        if confirm != "yes":
-            print("Aborted — gasless not available and fallback not confirmed.", file=sys.stderr)
-            sys.exit(1)
-        print("    Proceeding with standard transfer (user confirmed).", file=sys.stderr)
 
     # Fee info
     fee = data.get("fee", {})
@@ -343,6 +349,7 @@ def main():
 
     if submit_resp.get("status") != 0:
         sys.exit(1)
+    tx_policy.record_success(policy_ctx, approved_intent, args.approval_token, order_id=order_id)
 
     submit_data = submit_resp.get("data", {})
     print(f"\nOrderId: {order_id}", file=sys.stderr)
