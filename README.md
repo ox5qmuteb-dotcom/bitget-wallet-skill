@@ -228,14 +228,14 @@ Structured JSON → Agent interprets → Natural language response
 - For: on-chain alpha hunters
 - Platforms: Cron jobs, Dify workflows
 
-### 3b. Read-Only Wallet Monitoring
-> Track public wallets, balances, inactivity windows, and threshold alerts without storing secrets
+### 3b. Read-Only Asset Monitoring
+> Track public wallets, broader financial assets, inactivity windows, totals, and threshold alerts without storing secrets
 
 - `scripts/monitoring.py` provides an extensible provider/adapter layer for `evm_rpc`, `solana_rpc`, `bitget_price`, and test `static` providers
-- JSON status includes: network, chain, token, public wallet address, balance, approximate value (if available), last activity, last transaction, inactivity duration, and last update time
-- Internal API endpoints: `GET /healthz` and `GET /status`
+- JSON status includes: asset type, symbol, identifier, network, chain, public wallet address (when applicable), balance, approximate value, recent history, last activity, last transaction, inactivity duration, and last update time
+- Internal API endpoints: `GET /healthz`, `GET /status`, `GET /totals`, and `GET /alerts`
 - Alert rules support inactivity, low/high balance, large last transaction, and large total value using `Decimal`-safe comparisons
-- Configuration is public-address-only and can be supplied with `config/monitoring.example.json` plus `.env.example`
+- Configuration supports both general `assets` entries and legacy wallet-style entries, and can be supplied with `config/monitoring.example.json` plus `.env.example`
 - The monitoring flow is **read-only** and does **not** sign or execute transactions
 
 ### 4. Semi-Automated Trading Agent

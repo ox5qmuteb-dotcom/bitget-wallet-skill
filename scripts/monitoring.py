@@ -302,26 +302,42 @@ class ProviderConfig:
 @dataclass
 class WalletAssetConfig:
     name: str
-    network: str
-    chain: str
-    token: str
-    address: str
     provider: str
+    token: str
+    asset_type: str = "crypto"
+    network: str = ""
+    chain: str = ""
+    address: str = ""
+    identifier: str = ""
     contract: str = ""
     price_provider: str = ""
+    quote_currency: str = "USD"
     alerts: AlertRuleConfig = field(default_factory=AlertRuleConfig)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def symbol(self) -> str:
+        return self.token
+
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "WalletAssetConfig":
-        required = ["name", "network", "chain", "token", "address", "provider"]
+        required = ["name", "provider"]
         missing = [item for item in required if not data.get(item)]
         if missing:
             raise ConfigError(f"wallet entry missing required fields: {', '.join(missing)}")
-        chain = normalize_chain(str(data["chain"]))
-        address = str(data["address"]).strip()
-        if not validate_public_address(chain, address):
-            raise ConfigError(f"invalid public address for {chain}: {address}")
+        asset_type = str(data.get("asset_type") or ("crypto" if data.get("chain") or data.get("address") else "asset")).strip().lower()
+        symbol = str(data.get("symbol") or data.get("token") or "").strip()
+        if not symbol:
+            raise ConfigError("wallet entry missing required field: symbol")
+        chain = normalize_chain(str(data.get("chain") or ""))
+        address = str(data.get("address") or "").strip()
+        identifier = str(data.get("identifier") or address or symbol).strip()
+        if asset_type == "crypto":
+            required_crypto = [item for item in ("network", "chain", "address") if not data.get(item)]
+            if required_crypto:
+                raise ConfigError(f"crypto asset entry missing required fields: {', '.join(required_crypto)}")
+            if not validate_public_address(chain, address):
+                raise ConfigError(f"invalid public address for {chain}: {address}")
         contract = str(data.get("contract") or "").strip()
         if contract and chain not in EVM_CHAINS and chain not in SOLANA_CHAINS:
             raise ConfigError(f"contracts are only supported for EVM and Solana chains, got: {chain}")
@@ -329,13 +345,16 @@ class WalletAssetConfig:
             raise ConfigError(f"invalid contract address for {chain}: {contract}")
         return cls(
             name=str(data["name"]).strip(),
-            network=str(data["network"]).strip(),
-            chain=chain,
-            token=str(data["token"]).strip(),
-            address=address,
             provider=str(data["provider"]).strip(),
+            token=symbol,
+            asset_type=asset_type,
+            network=str(data.get("network") or asset_type.upper()).strip(),
+            chain=chain,
+            address=address,
+            identifier=identifier,
             contract=contract,
             price_provider=str(data.get("price_provider") or "").strip(),
+            quote_currency=str(data.get("quote_currency") or "USD").strip().upper(),
             alerts=AlertRuleConfig.from_mapping(data.get("alerts")),
             metadata=dict(data.get("metadata") or {}),
         )
@@ -351,11 +370,14 @@ class MonitorConfig:
     def from_mapping(cls, data: Mapping[str, Any]) -> "MonitorConfig":
         ensure_no_plaintext_secrets(data)
         providers = [ProviderConfig.from_mapping(item) for item in data.get("providers", [])]
-        wallets = [WalletAssetConfig.from_mapping(item) for item in data.get("wallets", [])]
+        targets_raw = data.get("assets")
+        if targets_raw is None:
+            targets_raw = data.get("wallets", [])
+        wallets = [WalletAssetConfig.from_mapping(item) for item in targets_raw]
         if not providers:
             raise ConfigError("monitoring config requires at least one provider")
         if not wallets:
-            raise ConfigError("monitoring config requires at least one wallet entry")
+            raise ConfigError("monitoring config requires at least one asset entry")
         return cls(
             providers=providers,
             wallets=wallets,
@@ -372,35 +394,48 @@ class MonitorConfig:
 @dataclass
 class MonitoringSnapshot:
     name: str
+    token: str
     network: str
     chain: str
-    token: str
-    address: str
     provider: str
+    address: Optional[str]
     balance: Decimal
+    asset_type: str = "crypto"
+    identifier: str = ""
+    quote_currency: str = "USD"
     approximate_value: Optional[Decimal] = None
     last_activity_at: Optional[datetime] = None
     last_transaction_hash: Optional[str] = None
     last_transaction_value: Optional[Decimal] = None
     inactivity_seconds: Optional[int] = None
     last_updated_at: datetime = field(default_factory=utcnow)
+    recent_history: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def symbol(self) -> str:
+        return self.token
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
+            "asset_type": self.asset_type,
+            "symbol": self.token,
+            "token": self.token,
+            "identifier": self.identifier,
             "network": self.network,
             "chain": self.chain,
-            "token": self.token,
             "address": self.address,
             "provider": self.provider,
             "balance": decimal_to_str(self.balance),
+            "quote_currency": self.quote_currency,
             "approximate_value": decimal_to_str(self.approximate_value),
             "last_activity_at": format_iso_datetime(self.last_activity_at),
             "last_transaction_hash": self.last_transaction_hash,
             "last_transaction_value": decimal_to_str(self.last_transaction_value),
             "inactivity_seconds": self.inactivity_seconds,
             "last_updated_at": format_iso_datetime(self.last_updated_at),
+            "recent_history": self.recent_history,
             "metadata": self.metadata,
         }
 
@@ -418,6 +453,7 @@ class MonitoringAlert:
             "severity": self.severity,
             "rule": self.rule,
             "wallet": self.wallet,
+            "asset": self.wallet,
             "message": self.message,
             "observed_value": self.observed_value,
         }
@@ -490,21 +526,25 @@ def _to_hex_quantity(value: str) -> int:
 class StaticProviderAdapter(ProviderAdapter):
     def fetch_wallet_asset(self, target: WalletAssetConfig) -> MonitoringSnapshot:
         snapshots = self.config.options.get("snapshots") or {}
-        item = snapshots.get(_target_lookup_key(target)) or snapshots.get(target.name)
+        item = snapshots.get(_target_lookup_key(target)) or snapshots.get(target.identifier) or snapshots.get(target.name)
         if not isinstance(item, dict):
             raise ProviderError(f"static snapshot not found for {target.name}")
         snapshot = MonitoringSnapshot(
             name=target.name,
+            token=target.token,
             network=target.network,
             chain=target.chain,
-            token=target.token,
-            address=target.address,
             provider=self.config.name,
+            address=target.address or None,
             balance=parse_decimal(item.get("balance", "0"), field_name="balance"),
+            asset_type=target.asset_type,
+            identifier=target.identifier,
+            quote_currency=str(item.get("quote_currency") or target.quote_currency).upper(),
             approximate_value=parse_decimal(item["approximate_value"], field_name="approximate_value") if item.get("approximate_value") is not None else None,
             last_activity_at=parse_iso_datetime(item.get("last_activity_at")),
             last_transaction_hash=item.get("last_transaction_hash"),
             last_transaction_value=parse_decimal(item["last_transaction_value"], field_name="last_transaction_value") if item.get("last_transaction_value") is not None else None,
+            recent_history=_normalize_history_points(item.get("recent_history"), quote_currency=str(item.get("quote_currency") or target.quote_currency).upper()),
             metadata=dict(item.get("metadata") or {}),
         )
         if snapshot.last_activity_at:
@@ -547,12 +587,15 @@ class EvmRpcProviderAdapter(ProviderAdapter):
         tx_count_raw = self._rpc("eth_getTransactionCount", [target.address, "latest"])
         return MonitoringSnapshot(
             name=target.name,
+            token=target.token,
             network=target.network,
             chain=target.chain,
-            token=target.token,
-            address=target.address,
             provider=self.config.name,
+            address=target.address,
             balance=balance,
+            asset_type=target.asset_type,
+            identifier=target.identifier,
+            quote_currency=target.quote_currency,
             metadata={"transaction_count": str(_to_hex_quantity(tx_count_raw))},
         )
 
@@ -606,12 +649,15 @@ class SolanaRpcProviderAdapter(ProviderAdapter):
         inactivity_seconds = int((utcnow() - last_activity_at).total_seconds()) if last_activity_at else None
         return MonitoringSnapshot(
             name=target.name,
+            token=target.token,
             network=target.network,
             chain=target.chain,
-            token=target.token,
-            address=target.address,
             provider=self.config.name,
+            address=target.address,
             balance=balance,
+            asset_type=target.asset_type,
+            identifier=target.identifier,
+            quote_currency=target.quote_currency,
             last_activity_at=last_activity_at,
             last_transaction_hash=last_hash,
             inactivity_seconds=inactivity_seconds,
@@ -681,7 +727,59 @@ class ProviderRegistry:
 
 
 def _target_lookup_key(target: WalletAssetConfig) -> str:
-    return f"{target.chain}:{target.address}:{target.contract or 'native'}:{target.token}"
+    return f"{target.asset_type}:{target.chain or 'general'}:{target.identifier}:{target.contract or 'native'}:{target.symbol}"
+
+
+def _normalize_history_points(points: Any, *, quote_currency: str) -> List[Dict[str, Any]]:
+    if not points:
+        return []
+    normalized: List[Dict[str, Any]] = []
+    if not isinstance(points, list):
+        raise ConfigError("recent_history must be a list")
+    for item in points:
+        if not isinstance(item, Mapping):
+            raise ConfigError("recent_history entries must be objects")
+        timestamp = format_iso_datetime(parse_iso_datetime(item.get("timestamp")))
+        if timestamp is None:
+            raise ConfigError("recent_history entries require timestamp")
+        entry: Dict[str, Any] = {"timestamp": timestamp}
+        if item.get("balance") is not None:
+            entry["balance"] = decimal_to_str(parse_decimal(item.get("balance"), field_name="history.balance"))
+        if item.get("approximate_value") is not None:
+            entry["approximate_value"] = decimal_to_str(parse_decimal(item.get("approximate_value"), field_name="history.approximate_value"))
+        entry["quote_currency"] = str(item.get("quote_currency") or quote_currency).upper()
+        normalized.append(entry)
+    return normalized
+
+
+def _build_aggregates(snapshots: List[MonitoringSnapshot]) -> Dict[str, Any]:
+    totals_by_currency: Dict[str, Decimal] = {}
+    totals_by_type: Dict[str, Dict[str, Any]] = {}
+    history_totals: Dict[tuple[str, str], Decimal] = {}
+    for snapshot in snapshots:
+        totals_by_type.setdefault(snapshot.asset_type, {"count": 0, "approximate_value": {}})
+        totals_by_type[snapshot.asset_type]["count"] += 1
+        if snapshot.approximate_value is not None:
+            totals_by_currency[snapshot.quote_currency] = totals_by_currency.get(snapshot.quote_currency, Decimal(0)) + snapshot.approximate_value
+            type_values = totals_by_type[snapshot.asset_type]["approximate_value"]
+            type_values[snapshot.quote_currency] = decimal_to_str(
+                parse_decimal(type_values.get(snapshot.quote_currency, "0"), field_name="aggregate")
+                + snapshot.approximate_value
+            )
+        for point in snapshot.recent_history:
+            if point.get("approximate_value") is None:
+                continue
+            key = (point["timestamp"], point["quote_currency"])
+            history_totals[key] = history_totals.get(key, Decimal(0)) + parse_decimal(point["approximate_value"], field_name="history.approximate_value")
+    return {
+        "asset_count": len(snapshots),
+        "totals_by_quote_currency": {currency: decimal_to_str(value) for currency, value in totals_by_currency.items()},
+        "totals_by_asset_type": totals_by_type,
+        "recent_history": [
+            {"timestamp": timestamp, "quote_currency": currency, "approximate_value": decimal_to_str(value)}
+            for (timestamp, currency), value in sorted(history_totals.items())
+        ],
+    }
 
 
 def build_alerts(snapshot: MonitoringSnapshot, rules: AlertRuleConfig) -> List[MonitoringAlert]:
@@ -773,6 +871,7 @@ class MonitoringService:
                 "status": status,
                 "updated_at": format_iso_datetime(utcnow()),
                 "snapshots": [item.to_dict() for item in snapshots],
+                "aggregates": _build_aggregates(snapshots),
                 "alerts": [item.to_dict() for item in alerts],
                 "errors": errors,
             }
@@ -819,6 +918,16 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/status":
             payload = service.refresh() if refresh or service.last_result is None else service.last_result
             self._send_json(200, payload)
+            emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
+            return
+        if parsed.path == "/totals":
+            payload = service.refresh() if refresh or service.last_result is None else service.last_result
+            self._send_json(200, {"status": payload["status"], "updated_at": payload["updated_at"], "aggregates": payload["aggregates"]})
+            emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
+            return
+        if parsed.path == "/alerts":
+            payload = service.refresh() if refresh or service.last_result is None else service.last_result
+            self._send_json(200, {"status": payload["status"], "updated_at": payload["updated_at"], "alerts": payload["alerts"], "errors": payload["errors"]})
             emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
         self._send_json(404, {"status": "not_found", "path": parsed.path})

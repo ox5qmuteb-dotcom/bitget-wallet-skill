@@ -221,25 +221,31 @@ class MonitoringTests(unittest.TestCase):
                         "type": "static",
                         "options": {
                             "snapshots": {
-                                "eth:0x1111111111111111111111111111111111111111:native:ETH": {
+                                "crypto:eth:0x1111111111111111111111111111111111111111:native:ETH": {
                                     "balance": "1000000.000000000000000001",
+                                    "approximate_value": "2000000.000000000000000002",
                                     "last_activity_at": "2026-01-01T00:00:00Z",
                                     "last_transaction_hash": "0xdeadbeef",
                                     "last_transaction_value": "250000",
+                                    "recent_history": [
+                                        {"timestamp": "2026-01-01T00:00:00Z", "approximate_value": "100"},
+                                        {"timestamp": "2026-01-02T00:00:00Z", "approximate_value": "110"}
+                                    ]
                                 }
                             },
                             "prices": {
-                                "eth:0x1111111111111111111111111111111111111111:native:ETH": "2"
+                                "crypto:eth:0x1111111111111111111111111111111111111111:native:ETH": "2"
                             },
                         },
                     }
                 ],
-                "wallets": [
+                "assets": [
                     {
                         "name": "Treasury ETH",
+                        "asset_type": "crypto",
                         "network": "Ethereum",
                         "chain": "eth",
-                        "token": "ETH",
+                        "symbol": "ETH",
                         "address": "0x1111111111111111111111111111111111111111",
                         "provider": "static-balance",
                         "price_provider": "static-balance",
@@ -253,6 +259,44 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["snapshots"][0]["approximate_value"], "2000000.000000000000000002")
         self.assertEqual({item["rule"] for item in result["alerts"]}, {"large_transaction", "large_value"})
+        self.assertEqual(result["aggregates"]["asset_count"], 1)
+        self.assertEqual(result["aggregates"]["totals_by_quote_currency"]["USD"], "2000000.000000000000000002")
+        self.assertEqual(len(result["aggregates"]["recent_history"]), 2)
+
+    def test_assets_config_supports_non_crypto_entries(self):
+        config = MonitorConfig.from_mapping(
+            {
+                "providers": [
+                    {
+                        "name": "static-assets",
+                        "type": "static",
+                        "options": {
+                            "snapshots": {
+                                "commodity:general:GOLD:native:GOLD": {
+                                    "balance": "3",
+                                    "approximate_value": "7500",
+                                    "quote_currency": "USD"
+                                }
+                            }
+                        },
+                    }
+                ],
+                "assets": [
+                    {
+                        "name": "Gold Reserve",
+                        "asset_type": "commodity",
+                        "symbol": "GOLD",
+                        "identifier": "GOLD",
+                        "provider": "static-assets",
+                        "quote_currency": "USD"
+                    }
+                ],
+            }
+        )
+        result = MonitoringService(config).refresh()
+        self.assertEqual(result["snapshots"][0]["asset_type"], "commodity")
+        self.assertEqual(result["snapshots"][0]["identifier"], "GOLD")
+        self.assertEqual(result["aggregates"]["totals_by_quote_currency"]["USD"], "7500")
 
     def test_service_captures_provider_failure(self):
         config = MonitorConfig.from_mapping(
@@ -489,6 +533,7 @@ class MonitoringTests(unittest.TestCase):
                             "snapshots": {
                                 "ETH Wallet": {
                                     "balance": "1.5",
+                                    "approximate_value": "5000",
                                     "last_transaction_hash": "0x1"
                                 }
                             }
@@ -518,6 +563,10 @@ class MonitoringTests(unittest.TestCase):
                 status_payload = json.load(response)
             with urlopen(base + "/healthz?refresh=1") as response:
                 health_payload = json.load(response)
+            with urlopen(base + "/totals?refresh=1") as response:
+                totals_payload = json.load(response)
+            with urlopen(base + "/alerts?refresh=1") as response:
+                alerts_payload = json.load(response)
         finally:
             server.shutdown()
             server.server_close()
@@ -526,6 +575,8 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(status_payload["snapshots"][0]["name"], "ETH Wallet")
         self.assertEqual(health_payload["status"], "ok")
         self.assertEqual(health_payload["providers"][0]["provider"], "static-balance")
+        self.assertEqual(totals_payload["aggregates"]["totals_by_quote_currency"]["USD"], "5000")
+        self.assertEqual(alerts_payload["alerts"], [])
 
     def test_http_endpoint_returns_json_when_service_missing(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), MonitoringRequestHandler)

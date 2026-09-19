@@ -2,7 +2,7 @@
 
 ## English
 
-- `scripts/monitoring.py` adds a **read-only** monitoring layer for public wallet addresses only.
+- `scripts/monitoring.py` adds a **read-only** monitoring layer for public on-chain holdings and broader financial assets.
 - Supported provider types today:
   - `evm_rpc` for EVM native / ERC-20 balances
   - `solana_rpc` for SOL / SPL balances plus last-signature activity
@@ -11,6 +11,8 @@
 - Internal API:
   - `GET /healthz`
   - `GET /status`
+  - `GET /totals`
+  - `GET /alerts`
 - Example commands:
 
 ```bash
@@ -19,12 +21,14 @@ python3 scripts/monitoring.py serve --config /absolute/path/to/config/monitoring
 ```
 
 - Configure public RPC endpoints with `.env` values from `.env.example`.
+- Config accepts modern `assets` entries and still reads legacy `wallets` entries for backward compatibility.
+- Snapshots now include `asset_type`, identifier, approximate value totals, and optional `recent_history`.
 - **Do not store** private keys, seed phrases, passwords, or API secrets in JSON config files or logs.
 - The monitoring flow is **observation only**. It does not sign, approve, send, or execute transactions.
 
 ## العربية
 
-- الملف `scripts/monitoring.py` يضيف طبقة مراقبة **للقراءة فقط** لعناوين المحافظ العامة.
+- الملف `scripts/monitoring.py` يضيف طبقة مراقبة **للقراءة فقط** للأرصدة العامة على الشبكة وللأصول المالية العامة بشكل أوسع.
 - أنواع المزودات المدعومة حاليًا:
   - `evm_rpc` لأرصدة الشبكات المتوافقة مع EVM وERC-20
   - `solana_rpc` لأرصدة SOL وSPL مع آخر نشاط من RPC
@@ -33,6 +37,8 @@ python3 scripts/monitoring.py serve --config /absolute/path/to/config/monitoring
 - الواجهة الداخلية:
   - `GET /healthz`
   - `GET /status`
+  - `GET /totals`
+  - `GET /alerts`
 - أمثلة التشغيل:
 
 ```bash
@@ -41,5 +47,7 @@ python3 scripts/monitoring.py serve --config /absolute/path/to/config/monitoring
 ```
 
 - استخدم `.env.example` كنموذج لقيم البيئة غير السرية فقط.
+- الإعدادات تقبل `assets` بشكل أساسي، مع استمرار دعم `wallets` القديمة للتوافق.
+- المخرجات أصبحت تعرض `asset_type` والمعرّف والإجماليات و`recent_history` عند توفرها.
 - **ممنوع** حفظ private keys أو seed phrases أو كلمات المرور أو API secrets داخل الإعدادات أو السجلات.
 - النظام مخصص للمتابعة والقراءة فقط، ولا يوقّع أو ينفذ معاملات.

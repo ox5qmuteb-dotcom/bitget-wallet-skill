@@ -34,14 +34,38 @@
       "base_url": "https://copenapi.bgwapi.io",
       "timeout_seconds": 10,
       "retries": 2
+    },
+    {
+      "name": "static-assets",
+      "type": "static",
+      "options": {
+        "snapshots": {
+          "commodity:general:gold-reserve:native:XAU": {
+            "balance": "12",
+            "approximate_value": "30000",
+            "quote_currency": "USD",
+            "recent_history": [
+              {
+                "timestamp": "2026-09-17T00:00:00Z",
+                "approximate_value": "29600"
+              },
+              {
+                "timestamp": "2026-09-18T00:00:00Z",
+                "approximate_value": "30000"
+              }
+            ]
+          }
+        }
+      }
     }
   ],
-  "wallets": [
+  "assets": [
     {
       "name": "Treasury ETH",
+      "asset_type": "crypto",
       "network": "Ethereum",
       "chain": "eth",
-      "token": "ETH",
+      "symbol": "ETH",
       "address": "0x1111111111111111111111111111111111111111",
       "provider": "eth-rpc",
       "alerts": {
@@ -50,9 +74,10 @@
     },
     {
       "name": "Operations USDC",
+      "asset_type": "crypto",
       "network": "Base",
       "chain": "base",
-      "token": "USDC",
+      "symbol": "USDC",
       "contract": "0x2222222222222222222222222222222222222222",
       "address": "0x1111111111111111111111111111111111111111",
       "provider": "base-rpc",
@@ -65,13 +90,25 @@
     },
     {
       "name": "Treasury SOL",
+      "asset_type": "crypto",
       "network": "Solana",
       "chain": "sol",
-      "token": "SOL",
+      "symbol": "SOL",
       "address": "11111111111111111111111111111111",
       "provider": "sol-rpc",
       "alerts": {
         "inactivity_seconds": 43200
+      }
+    },
+    {
+      "name": "Gold Reserve",
+      "asset_type": "commodity",
+      "symbol": "XAU",
+      "identifier": "gold-reserve",
+      "provider": "static-assets",
+      "quote_currency": "USD",
+      "metadata": {
+        "note": "Use a static or future commodity provider for non-crypto pricing."
       }
     }
   ]
