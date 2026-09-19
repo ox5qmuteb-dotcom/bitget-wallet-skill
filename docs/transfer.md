@@ -9,22 +9,31 @@ This document describes the **Transfer flow** for on-chain token transfers via t
 | Step | Interface / Script | Description |
 |------|--------------------|-------------|
 | 0 | `batch-v2` | **Pre-check**: verify sender has enough token balance and (if not gasless) enough native gas |
-| 1+2+3 | **`transfer_make_sign_send.py`** | One-shot (mnemonic/private-key): make + sign + submit in one run |
-| 1+2+3 | **`social_transfer_make_sign_send.py`** | One-shot (Social Login Wallet): make + sign (TEE) + submit. No local private key needed. |
+| 1+2+3 | **`transfer_make_sign_send.py`** | Preview-first: dry-run by default, then make + sign + submit only with `--confirm --approval-token` |
+| 1+2+3 | **`social_transfer_make_sign_send.py`** | Preview-first Social Login flow: dry-run by default, then make + sign (TEE) + submit only with `--confirm --approval-token` |
 | 4 | `get-transfer-order` | Poll order status until SUCCESS or FAILED |
 
 ### One-Shot Script (Recommended)
 
-Use `transfer_make_sign_send.py` to avoid signature expiry issues. It creates the order, signs locally, and submits immediately.
+Use `transfer_make_sign_send.py` to avoid signature expiry issues. It now defaults to **preview-only**; execution requires a matching `approvalToken`.
 
 ```bash
-# EVM token transfer (standard)
+# 1) Preview-only (default)
 python3 scripts/transfer_make_sign_send.py \
   --private-key-file /tmp/.pk_evm \
   --chain eth \
   --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
   --from-address 0xAbC... --to-address 0xDeF... \
-  --amount 100
+  --amount 100 --policy-file security/policy.json
+
+# 2) Execute the exact approved preview
+python3 scripts/transfer_make_sign_send.py \
+  --private-key-file /tmp/.pk_evm \
+  --chain eth \
+  --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --from-address 0xAbC... --to-address 0xDeF... \
+  --amount 100 --policy-file security/policy.json \
+  --confirm --approval-token <token>
 
 # EVM gasless transfer
 python3 scripts/transfer_make_sign_send.py \
@@ -45,7 +54,7 @@ python3 scripts/transfer_make_sign_send.py \
 
 ### One-Shot Script — Social Login Wallet
 
-Use `social_transfer_make_sign_send.py` when the user has a Social Login Wallet. No local private key needed — signing happens via Bitget Wallet TEE.
+Use `social_transfer_make_sign_send.py` when the user has a Social Login Wallet. No local private key needed — signing happens via Bitget Wallet TEE after a matching preview is approved.
 
 ```bash
 # Social Login Wallet: gasless transfer
@@ -117,12 +126,7 @@ When gasless is available, `data.noGas` contains:
 
 ### Gasless Unavailable — Explicit Fallback
 
-When `--gasless` is requested but gasless is not available (chain not supported, amount below threshold, no eligible pay token with sufficient balance), the scripts **do not silently fall back** to a standard transfer.
-
-Instead, the scripts:
-1. Print a warning explaining why gasless is unavailable
-2. Prompt the user: `"Type 'yes' to proceed with standard transfer (native gas required), anything else to abort"`
-3. Only proceed if the user types `yes` — otherwise abort
+When `--gasless` is requested but gasless is not available (chain not supported, amount below threshold, no eligible pay token with sufficient balance), the scripts abort **before signing**. There is no in-process fallback.
 
 **Scenarios where gasless is not available:**
 - The chain is not in the gasless whitelist
@@ -130,7 +134,7 @@ Instead, the scripts:
 - No pay token has sufficient balance or queryable price
 - `noGas` was not requested
 
-**Agent rule:** If the script aborts due to gasless unavailable, inform the user and ask whether they want to retry without `--gasless` (standard transfer). Do NOT automatically retry.
+**Agent rule:** If the script aborts due to gasless unavailable, inform the user and ask whether they want to create a **new preview** without `--gasless` (standard transfer). Do NOT automatically retry.
 
 ### EIP-7702 Override
 
@@ -139,12 +143,12 @@ Instead, the scripts:
 If the sender address is already bound to a third-party EIP-7702 contract, gasless will fail with **error code 30108**. To proceed:
 
 1. Inform the user: *"Your address has an existing third-party EIP-7702 binding. Gasless transfer requires replacing it. This is permanent."*
-2. Only after explicit user confirmation, re-run with `--override-7702`.
-3. The scripts will display an additional interactive confirmation prompt before signing.
+2. Enable `allow_override_7702` explicitly in the local policy file.
+3. Only after explicit user confirmation, create a new preview and re-run with `--confirm --approval-token <token> --override-7702`.
 
 The response `noGas.warn` will contain a warning message — **always display it to the user**.
 
-**Agent rule:** NEVER pass `--override-7702` without first explaining the risk and obtaining explicit user confirmation ("yes, override my existing 7702 binding").
+**Agent rule:** NEVER pass `--override-7702` without first explaining the risk, enabling it explicitly in policy, and obtaining explicit user confirmation for a fresh preview.
 
 ## Signing Modes
 
@@ -258,3 +262,13 @@ The `--memo` parameter is passed through to `ms_chain` for on-chain inclusion. C
 - **EVM orderId**: No hard expiry, but nonce may be consumed. Recommend submit within **10 minutes**.
 - **Solana blockhash**: Expires in ~**60 seconds**. Must sign and submit promptly (use `transfer_make_sign_send.py`).
 - **orderId is single-use**: Once submitted successfully, the same orderId cannot be resubmitted.
+## Local Execution Policy (Required)
+
+All fund-moving scripts now require a local JSON policy file.
+
+1. Copy `security/policy.example.json` to `security/policy.json`
+2. Edit `allowed_chains`, `allowed_from_addresses`, `allowed_to_addresses`, `allowed_contracts`, and `limits`
+3. Run the script once without `--confirm` to get a preview and `approvalToken`
+4. Re-run the exact same command with `--confirm --approval-token <token>`
+
+If `security/policy.json` is missing or disabled, the scripts refuse to make, sign, or submit transfers.
