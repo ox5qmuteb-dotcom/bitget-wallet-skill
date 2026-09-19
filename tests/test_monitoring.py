@@ -362,6 +362,47 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(result["snapshots"][0]["name"], "ETH Wallet")
         self.assertEqual(len(result["errors"]), 1)
 
+    def test_price_provider_failure_moves_snapshot_to_errors(self):
+        config = MonitorConfig.from_mapping(
+            {
+                "providers": [
+                    {
+                        "name": "static-balance",
+                        "type": "static",
+                        "options": {
+                            "snapshots": {
+                                "crypto:eth:0x1111111111111111111111111111111111111111:native:ETH": {
+                                    "balance": "1"
+                                }
+                            }
+                        },
+                    },
+                    {
+                        "name": "bitget-price",
+                        "type": "bitget_price",
+                        "base_url": "https://copenapi.bgwapi.io"
+                    }
+                ],
+                "assets": [
+                    {
+                        "name": "Treasury ETH",
+                        "asset_type": "crypto",
+                        "network": "Ethereum",
+                        "chain": "eth",
+                        "symbol": "ETH",
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "provider": "static-balance",
+                        "price_provider": "bitget-price"
+                    }
+                ],
+            }
+        )
+        result = MonitoringService(config).refresh()
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["snapshots"], [])
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("pricing_contract", result["errors"][0]["error"])
+
     def test_evm_rpc_parses_erc20_balance_with_decimal_precision(self):
         transport = FakeTransport(
             [

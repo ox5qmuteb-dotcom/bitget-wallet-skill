@@ -325,7 +325,9 @@ class WalletAssetConfig:
         missing = [item for item in required if not data.get(item)]
         if missing:
             raise ConfigError(f"wallet entry missing required fields: {', '.join(missing)}")
-        asset_type = str(data.get("asset_type") or ("crypto" if data.get("chain") or data.get("address") else "asset")).strip().lower()
+        asset_type = str(
+            data.get("asset_type") or ("crypto" if data.get("chain") or data.get("address") or data.get("contract") else "asset")
+        ).strip().lower()
         symbol = str(data.get("symbol") or data.get("token") or "").strip()
         if not symbol:
             raise ConfigError("wallet entry missing required field: symbol")
@@ -675,11 +677,16 @@ class BitgetPriceProviderAdapter(ProviderAdapter):
     def fetch_price(self, target: WalletAssetConfig) -> Optional[Decimal]:
         if normalize_chain(target.chain) not in EVM_CHAINS:
             raise ProviderError(f"{self.config.name} currently supports EVM token pricing only")
-        if not target.contract:
-            raise ProviderError(f"{self.config.name} requires an EVM token contract for pricing")
+        contract = (
+            target.contract
+            or str(target.metadata.get("pricing_contract") or "").strip()
+            or str((self.config.options.get("native_contracts") or {}).get(target.chain) or "").strip()
+        )
+        if not contract:
+            raise ProviderError(f"{self.config.name} requires an EVM token contract or pricing_contract metadata for pricing")
         path = "/market/v3/coin/batchGetBaseInfo"
         url = (self.config.base_url or BITGET_BASE_URL).rstrip("/") + path
-        body = {"list": [{"chain": target.chain, "contract": target.contract}]}
+        body = {"list": [{"chain": target.chain, "contract": contract}]}
         body_str = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
         timestamp_ms = str(int(time.time() * 1000))
         headers = {
