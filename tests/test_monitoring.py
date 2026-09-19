@@ -104,6 +104,26 @@ class MonitoringTests(unittest.TestCase):
                 }
             )
 
+    def test_valid_solana_contract_is_accepted_in_config(self):
+        config = MonitorConfig.from_mapping(
+            {
+                "providers": [{"name": "static-balance", "type": "static", "options": {}}],
+                "assets": [
+                    {
+                        "name": "Sol Wrapped Asset",
+                        "asset_type": "crypto",
+                        "network": "Solana",
+                        "chain": "sol",
+                        "symbol": "SOL",
+                        "address": "11111111111111111111111111111111",
+                        "contract": "So11111111111111111111111111111111111111112",
+                        "provider": "static-balance",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(config.wallets[0].contract, "So11111111111111111111111111111111111111112")
+
     def test_negative_alert_and_provider_settings_are_rejected(self):
         with self.assertRaises(ConfigError):
             MonitorConfig.from_mapping(
@@ -401,6 +421,7 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["snapshots"], [])
         self.assertEqual(len(result["errors"]), 1)
+        self.assertEqual(result["errors"][0]["provider"], "bitget-price")
         self.assertIn("pricing_contract", result["errors"][0]["error"])
 
     def test_evm_rpc_parses_erc20_balance_with_decimal_precision(self):

@@ -868,7 +868,13 @@ class MonitoringService:
                     if snapshot.last_activity_at and snapshot.inactivity_seconds is None:
                         snapshot.inactivity_seconds = int((snapshot.last_updated_at - snapshot.last_activity_at).total_seconds())
                     if target.price_provider:
-                        price = self.registry.get(target.price_provider).fetch_price(target)
+                        try:
+                            price = self.registry.get(target.price_provider).fetch_price(target)
+                        except (ProviderError, ConfigError) as exc:
+                            error = {"wallet": target.name, "provider": target.price_provider, "error": str(exc)}
+                            errors.append(error)
+                            emit_log(self.logger, logging.WARNING, "monitoring.provider_error", wallet=target.name, provider=target.price_provider, error=str(exc))
+                            continue
                         if price is not None:
                             snapshot.approximate_value = snapshot.balance * price
                     snapshots.append(snapshot)
