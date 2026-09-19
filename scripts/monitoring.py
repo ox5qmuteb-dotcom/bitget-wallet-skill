@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from threading import RLock
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import parse_qs, urlparse
@@ -273,6 +274,9 @@ class WalletAssetConfig:
         address = str(data["address"]).strip()
         if not validate_public_address(chain, address):
             raise ConfigError(f"invalid public address for {chain}: {address}")
+        contract = str(data.get("contract") or "").strip()
+        if contract and not validate_public_address(chain, contract):
+            raise ConfigError(f"invalid contract address for {chain}: {contract}")
         return cls(
             name=str(data["name"]).strip(),
             network=str(data["network"]).strip(),
@@ -280,7 +284,7 @@ class WalletAssetConfig:
             token=str(data["token"]).strip(),
             address=address,
             provider=str(data["provider"]).strip(),
-            contract=str(data.get("contract") or "").strip(),
+            contract=contract,
             price_provider=str(data.get("price_provider") or "").strip(),
             alerts=AlertRuleConfig.from_mapping(data.get("alerts")),
             metadata=dict(data.get("metadata") or {}),
@@ -685,45 +689,48 @@ class MonitoringService:
         self.registry = registry or ProviderRegistry(config.providers)
         self.logger = logger or logging.getLogger("bgw.monitoring")
         self.last_result: Optional[Dict[str, Any]] = None
+        self._lock = RLock()
 
     def refresh(self) -> Dict[str, Any]:
-        snapshots: List[MonitoringSnapshot] = []
-        alerts: List[MonitoringAlert] = []
-        errors: List[Dict[str, str]] = []
-        for target in self.config.wallets:
-            rules = self.config.default_alerts.merged_with(target.alerts)
-            try:
-                snapshot = self.registry.get(target.provider).fetch_wallet_asset(target)
-                if snapshot.last_activity_at and snapshot.inactivity_seconds is None:
-                    snapshot.inactivity_seconds = int((snapshot.last_updated_at - snapshot.last_activity_at).total_seconds())
-                if target.price_provider:
-                    price = self.registry.get(target.price_provider).fetch_price(target)
-                    if price is not None:
-                        snapshot.approximate_value = snapshot.balance * price
-                snapshots.append(snapshot)
-                alerts.extend(build_alerts(snapshot, rules))
-            except (ProviderError, ConfigError) as exc:
-                error = {"wallet": target.name, "provider": target.provider, "error": str(exc)}
-                errors.append(error)
-                emit_log(self.logger, logging.WARNING, "monitoring.provider_error", wallet=target.name, provider=target.provider, error=str(exc))
-        status = "ok" if not errors else ("degraded" if snapshots else "error")
-        self.last_result = {
-            "status": status,
-            "updated_at": format_iso_datetime(utcnow()),
-            "snapshots": [item.to_dict() for item in snapshots],
-            "alerts": [item.to_dict() for item in alerts],
-            "errors": errors,
-        }
-        return self.last_result
+        with self._lock:
+            snapshots: List[MonitoringSnapshot] = []
+            alerts: List[MonitoringAlert] = []
+            errors: List[Dict[str, str]] = []
+            for target in self.config.wallets:
+                rules = self.config.default_alerts.merged_with(target.alerts)
+                try:
+                    snapshot = self.registry.get(target.provider).fetch_wallet_asset(target)
+                    if snapshot.last_activity_at and snapshot.inactivity_seconds is None:
+                        snapshot.inactivity_seconds = int((snapshot.last_updated_at - snapshot.last_activity_at).total_seconds())
+                    if target.price_provider:
+                        price = self.registry.get(target.price_provider).fetch_price(target)
+                        if price is not None:
+                            snapshot.approximate_value = snapshot.balance * price
+                    snapshots.append(snapshot)
+                    alerts.extend(build_alerts(snapshot, rules))
+                except (ProviderError, ConfigError) as exc:
+                    error = {"wallet": target.name, "provider": target.provider, "error": str(exc)}
+                    errors.append(error)
+                    emit_log(self.logger, logging.WARNING, "monitoring.provider_error", wallet=target.name, provider=target.provider, error=str(exc))
+            status = "ok" if not errors else ("degraded" if snapshots else "error")
+            self.last_result = {
+                "status": status,
+                "updated_at": format_iso_datetime(utcnow()),
+                "snapshots": [item.to_dict() for item in snapshots],
+                "alerts": [item.to_dict() for item in alerts],
+                "errors": errors,
+            }
+            return self.last_result
 
     def health(self) -> Dict[str, Any]:
-        result = self.last_result or self.refresh()
-        return {
-            "status": result["status"],
-            "updated_at": result["updated_at"],
-            "providers": [provider.healthcheck() for provider in self.registry.providers.values()],
-            "errors": result["errors"],
-        }
+        with self._lock:
+            result = self.last_result or self.refresh()
+            return {
+                "status": result["status"],
+                "updated_at": result["updated_at"],
+                "providers": [provider.healthcheck() for provider in self.registry.providers.values()],
+                "errors": result["errors"],
+            }
 
 
 class MonitoringRequestHandler(BaseHTTPRequestHandler):
@@ -746,16 +753,18 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
             if refresh:
                 service.refresh()
             self._send_json(200, service.health())
+            emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
         if parsed.path == "/status":
             payload = service.refresh() if refresh or service.last_result is None else service.last_result
             self._send_json(200, payload)
+            emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
         self._send_json(404, {"status": "not_found", "path": parsed.path})
+        emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=404, refresh=refresh)
 
     def log_message(self, format: str, *args: Any) -> None:
-        service: MonitoringService = self.server.monitoring_service  # type: ignore[attr-defined]
-        emit_log(service.logger, logging.INFO, "monitoring.http", message=format % args)
+        return
 
 
 def _default_config_path() -> str:

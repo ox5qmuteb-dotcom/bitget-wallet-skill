@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import json
+from threading import Thread
 import unittest
+from urllib.request import urlopen
 
 from scripts.monitoring import (
     AlertRuleConfig,
@@ -11,11 +14,11 @@ from scripts.monitoring import (
     HttpTransport,
     MonitorConfig,
     MonitoringService,
+    MonitoringRequestHandler,
     ProviderConfig,
     ProviderError,
-    ProviderRegistry,
     SolanaRpcProviderAdapter,
-    StaticProviderAdapter,
+    ThreadingHTTPServer,
     WalletAssetConfig,
     build_alerts,
     ensure_no_plaintext_secrets,
@@ -71,6 +74,25 @@ class MonitoringTests(unittest.TestCase):
     def test_secret_fields_are_rejected_in_config(self):
         with self.assertRaises(ConfigError):
             ensure_no_plaintext_secrets({"providers": [], "private_key": "0xabc"})
+
+    def test_invalid_contract_is_rejected_in_config(self):
+        with self.assertRaises(ConfigError):
+            MonitorConfig.from_mapping(
+                {
+                    "providers": [{"name": "static-balance", "type": "static", "options": {}}],
+                    "wallets": [
+                        {
+                            "name": "Broken Token",
+                            "network": "Base",
+                            "chain": "base",
+                            "token": "USDC",
+                            "contract": "not-a-contract",
+                            "address": "0x1111111111111111111111111111111111111111",
+                            "provider": "static-balance",
+                        }
+                    ],
+                }
+            )
 
     def test_build_alerts_for_inactivity_balance_and_large_values(self):
         now = datetime.now(timezone.utc)
@@ -275,6 +297,55 @@ class MonitoringTests(unittest.TestCase):
                     provider="sol",
                 )
             )
+
+    def test_http_endpoints_return_status_and_health(self):
+        config = MonitorConfig.from_mapping(
+            {
+                "providers": [
+                    {
+                        "name": "static-balance",
+                        "type": "static",
+                        "options": {
+                            "snapshots": {
+                                "ETH Wallet": {
+                                    "balance": "1.5",
+                                    "last_transaction_hash": "0x1"
+                                }
+                            }
+                        },
+                    }
+                ],
+                "wallets": [
+                    {
+                        "name": "ETH Wallet",
+                        "network": "Ethereum",
+                        "chain": "eth",
+                        "token": "ETH",
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "provider": "static-balance",
+                    }
+                ],
+            }
+        )
+        service = MonitoringService(config)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MonitoringRequestHandler)
+        server.monitoring_service = service  # type: ignore[attr-defined]
+        thread = Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_port}"
+            with urlopen(base + "/status?refresh=1") as response:
+                status_payload = json.load(response)
+            with urlopen(base + "/healthz?refresh=1") as response:
+                health_payload = json.load(response)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.assertEqual(status_payload["status"], "ok")
+        self.assertEqual(status_payload["snapshots"][0]["name"], "ETH Wallet")
+        self.assertEqual(health_payload["status"], "ok")
+        self.assertEqual(health_payload["providers"][0]["provider"], "static-balance")
 
 
 if __name__ == "__main__":
