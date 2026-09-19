@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 import os
+from pathlib import Path
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import parse_qs, urlparse
@@ -159,7 +160,8 @@ def ensure_no_plaintext_secrets(payload: Any, *, path: str = "config") -> None:
     if isinstance(payload, dict):
         for key, value in payload.items():
             normalized = _normalize_key(key)
-            if key.endswith(("_env", "_env_var", "_secret_name")):
+            lowered_key = key.strip().lower()
+            if lowered_key.endswith(("_env", "_env_var", "_secret_name")):
                 pass
             elif normalized in SENSITIVE_CONFIG_KEYS and value not in (None, "", []):
                 raise ConfigError(f"{path}.{key} stores a sensitive secret; use environment variables or a secret manager reference instead")
@@ -528,7 +530,7 @@ class SolanaRpcProviderAdapter(ProviderAdapter):
                 if raw is not None:
                     total += parse_decimal(raw, field_name="uiAmountString")
                 else:
-                    amount = Decimal(str(amount_info.get("amount", "0")))
+                    amount = parse_decimal(amount_info.get("amount", "0"), field_name="amount")
                     decimals = int(amount_info.get("decimals", 0))
                     total += quantize_decimal(amount, decimals)
             balance = total
@@ -757,7 +759,8 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
 
 
 def _default_config_path() -> str:
-    return os.environ.get("BGW_MONITOR_CONFIG", "/home/runner/work/bitget-wallet-skill/bitget-wallet-skill/config/monitoring.example.json")
+    default_path = Path(__file__).resolve().parent.parent / "config" / "monitoring.example.json"
+    return os.environ.get("BGW_MONITOR_CONFIG", str(default_path))
 
 
 def load_service(config_path: str) -> MonitoringService:
@@ -789,6 +792,8 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         server.serve_forever()
     except KeyboardInterrupt:
         emit_log(service.logger, logging.INFO, "monitoring.server_stopped")
+    finally:
+        server.server_close()
 
 
 def main(argv: Optional[List[str]] = None) -> int:

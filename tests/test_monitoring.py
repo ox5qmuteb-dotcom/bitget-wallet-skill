@@ -164,6 +164,49 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(result["snapshots"], [])
         self.assertEqual(len(result["errors"]), 1)
 
+    def test_service_reports_degraded_when_some_wallets_succeed(self):
+        config = MonitorConfig.from_mapping(
+            {
+                "providers": [
+                    {
+                        "name": "static-balance",
+                        "type": "static",
+                        "options": {
+                            "snapshots": {
+                                "ETH Wallet": {
+                                    "balance": "1",
+                                    "last_transaction_hash": "0x1"
+                                }
+                            }
+                        },
+                    }
+                ],
+                "wallets": [
+                    {
+                        "name": "ETH Wallet",
+                        "network": "Ethereum",
+                        "chain": "eth",
+                        "token": "ETH",
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "provider": "static-balance",
+                    },
+                    {
+                        "name": "Broken Wallet",
+                        "network": "Ethereum",
+                        "chain": "eth",
+                        "token": "ETH",
+                        "address": "0x2222222222222222222222222222222222222222",
+                        "provider": "static-balance",
+                    },
+                ],
+            }
+        )
+        result = MonitoringService(config).refresh()
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(len(result["snapshots"]), 1)
+        self.assertEqual(result["snapshots"][0]["name"], "ETH Wallet")
+        self.assertEqual(len(result["errors"]), 1)
+
     def test_evm_rpc_parses_erc20_balance_with_decimal_precision(self):
         transport = FakeTransport(
             [
