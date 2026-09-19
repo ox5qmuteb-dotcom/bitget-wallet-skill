@@ -31,6 +31,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 _SOLANA_CHAIN_ID = 501
 
+import tx_policy
+
 # Chain code → social-wallet chain param mapping
 _EVM_CHAIN_MAP = {
     "eth": "eth",
@@ -198,7 +200,41 @@ def main():
     parser.add_argument("--slippage", required=True)
     parser.add_argument("--market", required=True)
     parser.add_argument("--protocol", required=True)
+    parser.add_argument("--confirm", action="store_true",
+                        help="Execute after a matching preview was approved.")
+    parser.add_argument("--approval-token", default="",
+                        help="Approval token returned by preview mode. Required with --confirm.")
+    parser.add_argument("--policy-file", default=None,
+                        help="Path to the JSON security policy file. Defaults to security/policy.json.")
     args = parser.parse_args()
+
+    policy_ctx = tx_policy.load_policy_context(args.policy_file)
+    intent = {
+        "operation": "swap",
+        "walletMode": "social",
+        "orderId": args.order_id,
+        "fromChain": args.from_chain,
+        "fromContract": args.from_contract,
+        "fromSymbol": args.from_symbol,
+        "fromAddress": args.from_address,
+        "toChain": args.to_chain,
+        "toContract": args.to_contract or "",
+        "toSymbol": args.to_symbol,
+        "toAddress": args.to_address,
+        "fromAmount": args.from_amount,
+        "slippage": args.slippage,
+        "market": args.market,
+        "protocol": args.protocol,
+    }
+    try:
+        if not args.confirm:
+            print(json.dumps(tx_policy.issue_preview(policy_ctx, intent), indent=2))
+            return
+        approved_intent = tx_policy.require_approval(policy_ctx, intent, args.approval_token)
+    except tx_policy.PolicyError as exc:
+        tx_policy.deny_and_log(policy_ctx, intent, str(exc))
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc)}, indent=2), file=sys.stderr)
+        sys.exit(1)
 
     # Import API module
     _api = importlib.import_module("bitget-wallet-agent-api")
@@ -246,6 +282,12 @@ def main():
     order_id = data["orderId"]
     txs = data["txs"]
     print(f"    orderId: {order_id}, txs: {len(txs)}", file=sys.stderr)
+    try:
+        tx_policy.inspect_swap_response(policy_ctx, approved_intent, data)
+    except tx_policy.PolicyError as exc:
+        tx_policy.deny_and_log(policy_ctx, approved_intent, str(exc), order_id=order_id)
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc), "orderId": order_id}, indent=2), file=sys.stderr)
+        sys.exit(1)
 
     # Step 2: Sign each tx
     print(">>> Step 2: sign (Social Login Wallet TEE)", file=sys.stderr)
@@ -279,6 +321,7 @@ def main():
 
     if send_resp.get("status") != 0 or send_resp.get("error_code") != 0:
         sys.exit(1)
+    tx_policy.record_success(policy_ctx, approved_intent, args.approval_token, order_id=order_id)
 
     print(
         f"\nOrderId: {order_id}\n"

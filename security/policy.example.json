@@ -1,0 +1,45 @@
+{
+  "enabled": true,
+  "approval_ttl_seconds": 900,
+  "allow_native_transfers": false,
+  "allow_approvals": false,
+  "allow_message_signing": false,
+  "allow_eip7702_auth": false,
+  "allow_override_7702": false,
+  "allowed_chains": [
+    "base",
+    "sol"
+  ],
+  "allowed_from_addresses": [
+    "0x1111111111111111111111111111111111111111",
+    "ApPjjZyZfWQ3GqbX9Q8hQ8zy1F5mLJ7L62LF8A3BnQU"
+  ],
+  "allowed_to_addresses": [
+    "0x2222222222222222222222222222222222222222",
+    "7xKXtqs8dAqC9jq5xjN8P3q7Vx8X41sJLdnrgFkMrDXR"
+  ],
+  "allowed_contracts": [
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  ],
+  "allowed_approval_contracts": [],
+  "limits": {
+    "default": {
+      "per_tx": "25",
+      "daily": "100",
+      "session": "50"
+    },
+    "per_asset": {
+      "base:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": {
+        "per_tx": "25",
+        "daily": "100",
+        "session": "50"
+      },
+      "sol:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+        "per_tx": "10",
+        "daily": "50",
+        "session": "20"
+      }
+    }
+  }
+}
