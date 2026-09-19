@@ -145,6 +145,97 @@ class PolicyEntrypointTest(unittest.TestCase):
         self.assertEqual(preview["preview"]["kind"], "swap")
         self.assertEqual(preview["preview"]["orderId"], "order_123")
 
+    def test_social_transfer_execution_without_approval_denies_before_network(self):
+        module = load_script_module("social_transfer_make_sign_send.py", "social_transfer_make_sign_send_test_deny")
+        policy_path = write_policy(
+            {
+                "enabled": True,
+                "mode": "preview-first",
+                "allow_social_login": True,
+                "allowlist": {"base": ["0x2222222222222222222222222222222222222222"]},
+                "supported_assets": {"base": ["0x4200000000000000000000000000000000000006"]},
+            }
+        )
+        argv = [
+            "social_transfer_make_sign_send.py",
+            "--policy-file",
+            policy_path,
+            "--wallet-id",
+            "wallet_123",
+            "--chain",
+            "base",
+            "--contract",
+            "0x4200000000000000000000000000000000000006",
+            "--from-address",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--to-address",
+            "0x2222222222222222222222222222222222222222",
+            "--amount",
+            "2",
+        ]
+        stderr = io.StringIO()
+        with mock.patch("sys.argv", argv), \
+             mock.patch.object(module.importlib, "import_module", side_effect=AssertionError("API should not be imported")), \
+             contextlib.redirect_stderr(stderr), \
+             self.assertRaises(SystemExit):
+            module.main()
+        self.assertIn("approval token", stderr.getvalue())
+
+    def test_social_order_preview_only_does_not_import_api(self):
+        module = load_script_module("social_order_make_sign_send.py", "social_order_make_sign_send_test_preview")
+        policy_path = write_policy(
+            {
+                "enabled": True,
+                "mode": "preview-first",
+                "allow_social_login": True,
+                "allow_swap": True,
+                "allowlist": {"eth": ["0x1111111111111111111111111111111111111111"]},
+                "supported_assets": {"eth": ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"]},
+            }
+        )
+        argv = [
+            "social_order_make_sign_send.py",
+            "--policy-file",
+            policy_path,
+            "--preview-only",
+            "--wallet-id",
+            "wallet_123",
+            "--order-id",
+            "order_123",
+            "--from-address",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--to-address",
+            "0x1111111111111111111111111111111111111111",
+            "--from-chain",
+            "eth",
+            "--from-contract",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "--from-symbol",
+            "USDC",
+            "--to-chain",
+            "eth",
+            "--to-contract",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "--to-symbol",
+            "USDC",
+            "--from-amount",
+            "1",
+            "--slippage",
+            "0.5",
+            "--market",
+            "demo-market",
+            "--protocol",
+            "demo-protocol",
+        ]
+        stdout = io.StringIO()
+        with mock.patch("sys.argv", argv), \
+             mock.patch.object(module.importlib, "import_module", side_effect=AssertionError("API should not be imported")), \
+             contextlib.redirect_stdout(stdout):
+            module.main()
+        preview = json.loads(stdout.getvalue())
+        self.assertEqual(preview["preview"]["kind"], "swap")
+        self.assertEqual(preview["preview"]["walletType"], "social")
+
     def test_order_sign_cli_denies_without_explicit_override(self):
         module = load_script_module("order_sign.py", "order_sign_test_cli")
         stderr = io.StringIO()

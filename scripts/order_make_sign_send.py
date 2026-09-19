@@ -154,6 +154,9 @@ def main():
     )
     try:
         cfg = tx_policy.load_policy_config(args.policy_file)
+        tx_policy.validate_asset_allowed(cfg, args.from_chain, args.from_contract, args.from_symbol)
+        if action == "bridge":
+            tx_policy.validate_asset_allowed(cfg, args.to_chain, args.to_contract or "", args.to_symbol)
         tx_policy.evaluate_transfer(
             tx_policy.TransferRequest(
                 chain=args.to_chain,
@@ -242,6 +245,9 @@ def main():
         txCount=len(txs),
     )
     try:
+        tx_policy.validate_asset_allowed(cfg, args.from_chain, args.from_contract, args.from_symbol)
+        if action == "bridge":
+            tx_policy.validate_asset_allowed(cfg, args.to_chain, args.to_contract or "", args.to_symbol)
         tx_policy.evaluate_transfer(
             tx_policy.TransferRequest(
                 chain=args.to_chain,

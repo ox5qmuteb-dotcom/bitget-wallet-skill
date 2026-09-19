@@ -182,6 +182,22 @@ def append_audit_log(policy: PolicyConfig, payload: Mapping[str, Any]) -> None:
         handle.write(json.dumps(sanitize_audit_log(dict(payload)), sort_keys=True) + "\n")
 
 
+def validate_asset_allowed(cfg: PolicyConfig, chain: str, contract: str = "", asset_symbol: str = "") -> bool:
+    normalized_chain = (chain or "").lower()
+    normalized_symbol = (asset_symbol or "").strip().lower()
+    normalized_contract = _normalize_address(normalized_chain, contract)
+    if normalized_symbol and normalized_symbol in cfg.disabled_assets:
+        _deny("DENY: asset is disabled by policy")
+    if normalized_contract and normalized_contract.lower() in cfg.disabled_assets:
+        _deny("DENY: asset is disabled by policy")
+    supported_assets = {
+        _normalize_address(normalized_chain, item) for item in cfg.supported_assets.get(normalized_chain, set())
+    }
+    if supported_assets and normalized_contract and normalized_contract not in supported_assets:
+        _deny("DENY: asset is not enabled by policy")
+    return True
+
+
 def evaluate_transfer(
     req: TransferRequest,
     cfg: PolicyConfig,
@@ -210,16 +226,7 @@ def evaluate_transfer(
     if cfg.session_limit > 0 and session_spent + req.amount > cfg.session_limit:
         _deny("DENY: amount exceeds session limit")
 
-    asset_symbol = (req.asset_symbol or "").strip().lower()
-    contract = _normalize_address(chain, req.contract)
-    if asset_symbol and asset_symbol in cfg.disabled_assets:
-        _deny("DENY: asset is disabled by policy")
-    if contract and contract in cfg.disabled_assets:
-        _deny("DENY: asset is disabled by policy")
-
-    supported_assets = {_normalize_address(chain, item) for item in cfg.supported_assets.get(chain, set())}
-    if supported_assets and contract and contract not in supported_assets:
-        _deny("DENY: asset is not enabled by policy")
+    validate_asset_allowed(cfg, chain, req.contract, req.asset_symbol)
 
     if not cfg.allow_native_transfer and req.contract == "":
         _deny("DENY: native-token transfers are disabled by default")
