@@ -158,6 +158,16 @@ def validate_public_address(chain: str, address: str) -> bool:
     return bool(candidate)
 
 
+def is_loopback_host(host: str) -> bool:
+    candidate = (host or "").strip()
+    if candidate == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
 def _is_valid_solana_public_key(candidate: str) -> bool:
     if not candidate or any(ch not in BASE58_ALPHABET for ch in candidate):
         return False
@@ -890,13 +900,12 @@ class MonitoringService:
                     if target.price_provider:
                         try:
                             price = self.registry.get(target.price_provider).fetch_price(target)
+                            if price is not None:
+                                snapshot.approximate_value = snapshot.balance * price
                         except (ProviderError, ConfigError) as exc:
                             error = {"wallet": target.name, "provider": target.price_provider, "error": str(exc)}
                             errors.append(error)
                             emit_log(self.logger, logging.WARNING, "monitoring.provider_error", wallet=target.name, provider=target.price_provider, error=str(exc))
-                            continue
-                        if price is not None:
-                            snapshot.approximate_value = snapshot.balance * price
                     snapshots.append(snapshot)
                     alerts.extend(build_alerts(snapshot, rules))
                 except (ProviderError, ConfigError) as exc:
@@ -926,18 +935,19 @@ class MonitoringService:
             "errors": result["errors"],
         }
 
+    def get_status_payload(self, *, refresh: bool = False) -> Dict[str, Any]:
+        if refresh:
+            return self.refresh()
+        with self._lock:
+            result = self.last_result
+        return result or self.refresh()
+
 
 class MonitoringRequestHandler(BaseHTTPRequestHandler):
     server_version = "BGWMonitoring/1.0"
 
     def _is_local_request(self) -> bool:
-        host = (self.client_address[0] or "").strip()
-        if host == "localhost":
-            return True
-        try:
-            return ipaddress.ip_address(host).is_loopback
-        except ValueError:
-            return False
+        return is_loopback_host(self.client_address[0] or "")
 
     def _send_json(self, code: int, payload: Mapping[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
@@ -965,17 +975,17 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
             emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
         if parsed.path == "/status":
-            payload = service.refresh() if refresh or service.last_result is None else service.last_result
+            payload = service.get_status_payload(refresh=refresh)
             self._send_json(200, payload)
             emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
         if parsed.path == "/totals":
-            payload = service.refresh() if refresh or service.last_result is None else service.last_result
+            payload = service.get_status_payload(refresh=refresh)
             self._send_json(200, {"status": payload["status"], "updated_at": payload["updated_at"], "aggregates": payload["aggregates"]})
             emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
         if parsed.path == "/alerts":
-            payload = service.refresh() if refresh or service.last_result is None else service.last_result
+            payload = service.get_status_payload(refresh=refresh)
             self._send_json(200, {"status": payload["status"], "updated_at": payload["updated_at"], "alerts": payload["alerts"], "errors": payload["errors"]})
             emit_log(service.logger, logging.INFO, "monitoring.http", method="GET", path=parsed.path, status_code=200, refresh=refresh)
             return
@@ -1010,7 +1020,7 @@ def _cmd_health(args: argparse.Namespace) -> None:
 
 
 def _cmd_serve(args: argparse.Namespace) -> None:
-    if args.host not in {"127.0.0.1", "::1", "localhost"}:
+    if not is_loopback_host(args.host):
         raise ConfigError("monitoring server host must be a localhost/loopback address")
     service = load_service(args.config)
     service.refresh()

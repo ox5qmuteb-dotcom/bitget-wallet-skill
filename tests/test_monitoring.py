@@ -446,8 +446,9 @@ class MonitoringTests(unittest.TestCase):
             }
         )
         result = MonitoringService(config).refresh()
-        self.assertEqual(result["status"], "error")
-        self.assertEqual(result["snapshots"], [])
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(len(result["snapshots"]), 1)
+        self.assertIsNone(result["snapshots"][0]["approximate_value"])
         self.assertEqual(len(result["errors"]), 1)
         self.assertEqual(result["errors"][0]["provider"], "bitget-price")
         self.assertIn("pricing_contract", result["errors"][0]["error"])
