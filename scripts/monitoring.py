@@ -248,7 +248,10 @@ class ProviderConfig:
         kind = (data.get("type") or "").strip()
         if not name or not kind:
             raise ConfigError("each provider needs name and type")
-        timeout_seconds = float(data.get("timeout_seconds", 10.0))
+        try:
+            timeout_seconds = float(data.get("timeout_seconds", 10.0))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("timeout_seconds must be a number greater than zero") from exc
         retries = parse_non_negative_int(data.get("retries", 2), field_name="retries")
         if timeout_seconds <= 0:
             raise ConfigError("timeout_seconds must be greater than zero")
@@ -702,7 +705,7 @@ def build_alerts(snapshot: MonitoringSnapshot, rules: AlertRuleConfig) -> List[M
                 observed_value=decimal_to_str(snapshot.approximate_value),
             )
         )
-    if rules.large_transaction_value is not None and snapshot.last_transaction_value is not None and abs(snapshot.last_transaction_value) >= rules.large_transaction_value:
+    if rules.large_transaction_value is not None and snapshot.last_transaction_value is not None and snapshot.last_transaction_value >= rules.large_transaction_value:
         alerts.append(
             MonitoringAlert(
                 severity="warning",
@@ -780,7 +783,10 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        service: MonitoringService = self.server.monitoring_service  # type: ignore[attr-defined]
+        service = getattr(self.server, "monitoring_service", None)
+        if service is None:
+            self._send_json(500, {"status": "error", "error": "monitoring service not attached"})
+            return
         query = parse_qs(parsed.query)
         refresh = query.get("refresh", ["0"])[0] == "1"
         if parsed.path == "/healthz":

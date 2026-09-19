@@ -5,6 +5,7 @@ from decimal import Decimal
 import json
 from threading import Thread
 import unittest
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from scripts.monitoring import (
@@ -134,6 +135,8 @@ class MonitoringTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": 0})
         with self.assertRaises(ConfigError):
+            ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": "abc"})
+        with self.assertRaises(ConfigError):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "retries": -1})
         with self.assertRaises(ConfigError):
             MonitorConfig.from_mapping(
@@ -181,6 +184,22 @@ class MonitoringTests(unittest.TestCase):
             ),
         )
         self.assertEqual({item.rule for item in alerts}, {"inactivity", "min_balance", "large_transaction", "large_value"})
+
+    def test_large_negative_transaction_does_not_trigger_positive_threshold_alert(self):
+        from scripts.monitoring import MonitoringSnapshot
+
+        snapshot = MonitoringSnapshot(
+            name="Treasury ETH",
+            network="Ethereum",
+            chain="eth",
+            token="USDC",
+            address="0x1111111111111111111111111111111111111111",
+            provider="static",
+            balance=Decimal("100"),
+            last_transaction_value=Decimal("-1200"),
+        )
+        alerts = build_alerts(snapshot, AlertRuleConfig(large_transaction_value=Decimal("1000")))
+        self.assertEqual(alerts, [])
 
     def test_static_provider_and_service_refresh(self):
         config = MonitorConfig.from_mapping(
@@ -431,6 +450,25 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual(status_payload["snapshots"][0]["name"], "ETH Wallet")
         self.assertEqual(health_payload["status"], "ok")
         self.assertEqual(health_payload["providers"][0]["provider"], "static-balance")
+
+    def test_http_endpoint_returns_json_when_service_missing(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MonitoringRequestHandler)
+        thread = Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            try:
+                with urlopen(f"http://127.0.0.1:{server.server_port}/status") as response:
+                    payload = json.load(response)
+                    status_code = response.status
+            except HTTPError as exc:
+                payload = json.load(exc)
+                status_code = exc.code
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.assertEqual(status_code, 500)
+        self.assertEqual(payload["status"], "error")
 
 
 if __name__ == "__main__":
