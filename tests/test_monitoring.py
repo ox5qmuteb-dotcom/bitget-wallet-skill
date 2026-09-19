@@ -413,6 +413,10 @@ class MonitoringTests(unittest.TestCase):
         )
         self.assertEqual(snapshot.balance, Decimal("1"))
         self.assertEqual(len(transport.calls), 2)
+        self.assertEqual(
+            [call["json_body"]["method"] for call in transport.calls],
+            ["eth_call", "eth_getTransactionCount"],
+        )
 
     def test_solana_rpc_uses_last_signature_for_inactivity(self):
         transport = FakeTransport(

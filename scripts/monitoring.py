@@ -676,7 +676,7 @@ class BitgetPriceProviderAdapter(ProviderAdapter):
         if normalize_chain(target.chain) not in EVM_CHAINS:
             raise ProviderError(f"{self.config.name} currently supports EVM token pricing only")
         if not target.contract:
-            return None
+            raise ProviderError(f"{self.config.name} requires an EVM token contract for pricing")
         path = "/market/v3/coin/batchGetBaseInfo"
         url = (self.config.base_url or BITGET_BASE_URL).rstrip("/") + path
         body = {"list": [{"chain": target.chain, "contract": target.contract}]}
@@ -762,19 +762,23 @@ def _build_aggregates(snapshots: List[MonitoringSnapshot]) -> Dict[str, Any]:
         if snapshot.approximate_value is not None:
             totals_by_currency[snapshot.quote_currency] = totals_by_currency.get(snapshot.quote_currency, Decimal(0)) + snapshot.approximate_value
             type_values = totals_by_type[snapshot.asset_type]["approximate_value"]
-            type_values[snapshot.quote_currency] = decimal_to_str(
-                parse_decimal(type_values.get(snapshot.quote_currency, "0"), field_name="aggregate")
-                + snapshot.approximate_value
-            )
+            type_values[snapshot.quote_currency] = type_values.get(snapshot.quote_currency, Decimal(0)) + snapshot.approximate_value
         for point in snapshot.recent_history:
             if point.get("approximate_value") is None:
                 continue
             key = (point["timestamp"], point["quote_currency"])
             history_totals[key] = history_totals.get(key, Decimal(0)) + parse_decimal(point["approximate_value"], field_name="history.approximate_value")
+    rendered_by_type = {
+        asset_type: {
+            "count": payload["count"],
+            "approximate_value": {currency: decimal_to_str(value) for currency, value in payload["approximate_value"].items()},
+        }
+        for asset_type, payload in totals_by_type.items()
+    }
     return {
         "asset_count": len(snapshots),
         "totals_by_quote_currency": {currency: decimal_to_str(value) for currency, value in totals_by_currency.items()},
-        "totals_by_asset_type": totals_by_type,
+        "totals_by_asset_type": rendered_by_type,
         "recent_history": [
             {"timestamp": timestamp, "quote_currency": currency, "approximate_value": decimal_to_str(value)}
             for (timestamp, currency), value in sorted(history_totals.items())
