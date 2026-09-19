@@ -121,7 +121,7 @@ def quantize_decimal(value: Decimal, decimals: int) -> Decimal:
 
 
 def decimal_to_str(value: Optional[Decimal]) -> Optional[str]:
-    return None if value is None else format(value.normalize(), "f")
+    return None if value is None else format(value, "f")
 
 
 def normalize_chain(chain: str) -> str:
@@ -134,7 +134,7 @@ def validate_public_address(chain: str, address: str) -> bool:
     if normalized_chain in EVM_CHAINS:
         return len(candidate) == 42 and candidate.startswith("0x") and all(ch in "0123456789abcdefABCDEF" for ch in candidate[2:])
     if normalized_chain in SOLANA_CHAINS:
-        return 32 <= len(candidate) <= 44 and all(ch in BASE58_ALPHABET for ch in candidate)
+        return 32 <= len(candidate) <= 48 and all(ch in BASE58_ALPHABET for ch in candidate)
     return bool(candidate)
 
 
@@ -188,8 +188,11 @@ class AlertRuleConfig:
     @classmethod
     def from_mapping(cls, data: Optional[Mapping[str, Any]]) -> "AlertRuleConfig":
         data = data or {}
+        inactivity_seconds = int(data["inactivity_seconds"]) if data.get("inactivity_seconds") is not None else None
+        if inactivity_seconds is not None and inactivity_seconds < 0:
+            raise ConfigError("inactivity_seconds must be zero or greater")
         return cls(
-            inactivity_seconds=int(data["inactivity_seconds"]) if data.get("inactivity_seconds") is not None else None,
+            inactivity_seconds=inactivity_seconds,
             min_balance=parse_decimal(data["min_balance"], field_name="min_balance") if data.get("min_balance") is not None else None,
             max_balance=parse_decimal(data["max_balance"], field_name="max_balance") if data.get("max_balance") is not None else None,
             large_transaction_value=parse_decimal(data["large_transaction_value"], field_name="large_transaction_value") if data.get("large_transaction_value") is not None else None,
@@ -225,6 +228,12 @@ class ProviderConfig:
         kind = (data.get("type") or "").strip()
         if not name or not kind:
             raise ConfigError("each provider needs name and type")
+        timeout_seconds = float(data.get("timeout_seconds", 10.0))
+        retries = int(data.get("retries", 2))
+        if timeout_seconds <= 0:
+            raise ConfigError("timeout_seconds must be greater than zero")
+        if retries < 0:
+            raise ConfigError("retries must be zero or greater")
         return cls(
             name=name,
             type=kind,
@@ -234,8 +243,8 @@ class ProviderConfig:
             rpc_url_env=(data.get("rpc_url_env") or "").strip(),
             base_url=(data.get("base_url") or "").strip(),
             options=dict(data.get("options") or {}),
-            timeout_seconds=float(data.get("timeout_seconds", 10.0)),
-            retries=int(data.get("retries", 2)),
+            timeout_seconds=timeout_seconds,
+            retries=retries,
         )
 
     def endpoint(self) -> str:
@@ -566,7 +575,7 @@ class SolanaRpcProviderAdapter(ProviderAdapter):
 
 
 class BitgetPriceProviderAdapter(ProviderAdapter):
-    def _make_sign(self, path: str, body_str: str, timestamp_ms: str) -> str:
+    def _make_request_checksum(self, path: str, body_str: str, timestamp_ms: str) -> str:
         digest = hashlib.sha256(f"POST{path}{body_str}{timestamp_ms}".encode("utf-8")).hexdigest()
         return "0x" + digest
 
@@ -588,7 +597,8 @@ class BitgetPriceProviderAdapter(ProviderAdapter):
             "clientversion": "10.0.0",
             "language": "en",
             "token": "toc_agent",
-            "X-SIGN": self._make_sign(path, body_str, timestamp_ms),
+            # Bitget's public agent API expects this deterministic request checksum header.
+            "X-SIGN": self._make_request_checksum(path, body_str, timestamp_ms),
             "X-TIMESTAMP": timestamp_ms,
         }
         result = self.transport.request_json("POST", url, json_body=body, headers=headers)
@@ -724,13 +734,15 @@ class MonitoringService:
 
     def health(self) -> Dict[str, Any]:
         with self._lock:
-            result = self.last_result or self.refresh()
-            return {
-                "status": result["status"],
-                "updated_at": result["updated_at"],
-                "providers": [provider.healthcheck() for provider in self.registry.providers.values()],
-                "errors": result["errors"],
-            }
+            result = self.last_result
+        if result is None:
+            result = self.refresh()
+        return {
+            "status": result["status"],
+            "updated_at": result["updated_at"],
+            "providers": [provider.healthcheck() for provider in self.registry.providers.values()],
+            "errors": result["errors"],
+        }
 
 
 class MonitoringRequestHandler(BaseHTTPRequestHandler):

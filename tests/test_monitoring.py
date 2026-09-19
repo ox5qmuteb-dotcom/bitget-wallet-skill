@@ -94,6 +94,29 @@ class MonitoringTests(unittest.TestCase):
                 }
             )
 
+    def test_negative_alert_and_provider_settings_are_rejected(self):
+        with self.assertRaises(ConfigError):
+            MonitorConfig.from_mapping(
+                {
+                    "providers": [{"name": "static-balance", "type": "static", "options": {}}],
+                    "wallets": [
+                        {
+                            "name": "ETH Wallet",
+                            "network": "Ethereum",
+                            "chain": "eth",
+                            "token": "ETH",
+                            "address": "0x1111111111111111111111111111111111111111",
+                            "provider": "static-balance",
+                            "alerts": {"inactivity_seconds": -1},
+                        }
+                    ],
+                }
+            )
+        with self.assertRaises(ConfigError):
+            ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": 0})
+        with self.assertRaises(ConfigError):
+            ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "retries": -1})
+
     def test_build_alerts_for_inactivity_balance_and_large_values(self):
         now = datetime.now(timezone.utc)
         from scripts.monitoring import MonitoringSnapshot
