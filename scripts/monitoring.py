@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, localcontext
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import logging
 import math
@@ -527,7 +528,7 @@ def _to_hex_quantity(value: str) -> int:
 class StaticProviderAdapter(ProviderAdapter):
     def fetch_wallet_asset(self, target: WalletAssetConfig) -> MonitoringSnapshot:
         snapshots = self.config.options.get("snapshots") or {}
-        item = snapshots.get(_target_lookup_key(target)) or snapshots.get(target.identifier) or snapshots.get(target.name)
+        item = _lookup_static_mapping(snapshots, _target_lookup_key(target), target.identifier, target.name)
         if not isinstance(item, dict):
             raise ProviderError(f"static snapshot not found for {target.name}")
         snapshot = MonitoringSnapshot(
@@ -554,7 +555,7 @@ class StaticProviderAdapter(ProviderAdapter):
 
     def fetch_price(self, target: WalletAssetConfig) -> Optional[Decimal]:
         prices = self.config.options.get("prices") or {}
-        raw = prices.get(_target_lookup_key(target)) or prices.get(target.name)
+        raw = _lookup_static_mapping(prices, _target_lookup_key(target), target.identifier, target.name)
         if raw is None:
             return None
         return parse_decimal(raw, field_name="price")
@@ -738,7 +739,10 @@ class ProviderRegistry:
 
 
 def _target_lookup_key(target: WalletAssetConfig) -> str:
-    return f"{target.asset_type}:{target.chain or 'general'}:{target.identifier}:{target.contract or 'native'}:{target.symbol}"
+    identifier = (target.identifier or "").strip().lower()
+    contract = (target.contract or "native").strip().lower()
+    symbol = (target.symbol or "").strip().lower()
+    return f"{target.asset_type}:{target.chain or 'general'}:{identifier}:{contract}:{symbol}"
 
 
 def _normalize_history_points(points: Any, *, quote_currency: str) -> List[Dict[str, Any]]:
@@ -761,6 +765,18 @@ def _normalize_history_points(points: Any, *, quote_currency: str) -> List[Dict[
         entry["quote_currency"] = str(item.get("quote_currency") or quote_currency).upper()
         normalized.append(entry)
     return normalized
+
+
+def _lookup_static_mapping(mapping: Mapping[str, Any], *candidates: str) -> Any:
+    for candidate in candidates:
+        if candidate in mapping:
+            return mapping[candidate]
+    lowered = {str(key).lower(): value for key, value in mapping.items()}
+    for candidate in candidates:
+        normalized = str(candidate).lower()
+        if normalized in lowered:
+            return lowered[normalized]
+    return None
 
 
 def _build_aggregates(snapshots: List[MonitoringSnapshot]) -> Dict[str, Any]:
@@ -916,7 +932,12 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
 
     def _is_local_request(self) -> bool:
         host = (self.client_address[0] or "").strip()
-        return host in {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"}
+        if host == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
 
     def _send_json(self, code: int, payload: Mapping[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
