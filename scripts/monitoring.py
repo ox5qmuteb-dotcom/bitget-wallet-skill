@@ -13,7 +13,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 import os
-from pathlib import Path
 from threading import RLock
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional
@@ -188,15 +187,24 @@ class AlertRuleConfig:
     @classmethod
     def from_mapping(cls, data: Optional[Mapping[str, Any]]) -> "AlertRuleConfig":
         data = data or {}
+        def _non_negative_decimal(field: str) -> Optional[Decimal]:
+            raw = data.get(field)
+            if raw is None:
+                return None
+            parsed = parse_decimal(raw, field_name=field)
+            if parsed < 0:
+                raise ConfigError(f"{field} must be zero or greater")
+            return parsed
+
         inactivity_seconds = int(data["inactivity_seconds"]) if data.get("inactivity_seconds") is not None else None
         if inactivity_seconds is not None and inactivity_seconds < 0:
             raise ConfigError("inactivity_seconds must be zero or greater")
         return cls(
             inactivity_seconds=inactivity_seconds,
-            min_balance=parse_decimal(data["min_balance"], field_name="min_balance") if data.get("min_balance") is not None else None,
-            max_balance=parse_decimal(data["max_balance"], field_name="max_balance") if data.get("max_balance") is not None else None,
-            large_transaction_value=parse_decimal(data["large_transaction_value"], field_name="large_transaction_value") if data.get("large_transaction_value") is not None else None,
-            large_value_threshold=parse_decimal(data["large_value_threshold"], field_name="large_value_threshold") if data.get("large_value_threshold") is not None else None,
+            min_balance=_non_negative_decimal("min_balance"),
+            max_balance=_non_negative_decimal("max_balance"),
+            large_transaction_value=_non_negative_decimal("large_transaction_value"),
+            large_value_threshold=_non_negative_decimal("large_value_threshold"),
         )
 
     def merged_with(self, override: "AlertRuleConfig") -> "AlertRuleConfig":
@@ -583,6 +591,8 @@ class BitgetPriceProviderAdapter(ProviderAdapter):
         raise ProviderError(f"{self.config.name} is a price-only provider")
 
     def fetch_price(self, target: WalletAssetConfig) -> Optional[Decimal]:
+        if normalize_chain(target.chain) not in EVM_CHAINS:
+            raise ProviderError(f"{self.config.name} currently supports EVM token pricing only")
         if not target.contract:
             return None
         path = "/market/v3/coin/batchGetBaseInfo"
@@ -780,8 +790,7 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
 
 
 def _default_config_path() -> str:
-    default_path = Path(__file__).resolve().parent.parent / "config" / "monitoring.example.json"
-    return os.environ.get("BGW_MONITOR_CONFIG", str(default_path))
+    return os.environ.get("BGW_MONITOR_CONFIG", "")
 
 
 def load_service(config_path: str) -> MonitoringService:
@@ -834,6 +843,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.set_defaults(func=_cmd_serve)
 
     args = parser.parse_args(argv)
+    if not args.config:
+        parser.error("monitoring config is required via --config or BGW_MONITOR_CONFIG")
     args.func(args)
     return 0
 

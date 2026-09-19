@@ -112,6 +112,25 @@ class MonitoringTests(unittest.TestCase):
                     ],
                 }
             )
+        for field in ("min_balance", "max_balance", "large_transaction_value", "large_value_threshold"):
+            with self.subTest(field=field):
+                with self.assertRaises(ConfigError):
+                    MonitorConfig.from_mapping(
+                        {
+                            "providers": [{"name": "static-balance", "type": "static", "options": {}}],
+                            "wallets": [
+                                {
+                                    "name": "ETH Wallet",
+                                    "network": "Ethereum",
+                                    "chain": "eth",
+                                    "token": "ETH",
+                                    "address": "0x1111111111111111111111111111111111111111",
+                                    "provider": "static-balance",
+                                    "alerts": {field: "-1"},
+                                }
+                            ],
+                        }
+                    )
         with self.assertRaises(ConfigError):
             ProviderConfig.from_mapping({"name": "bad", "type": "evm_rpc", "rpc_url": "https://rpc.example", "timeout_seconds": 0})
         with self.assertRaises(ConfigError):
