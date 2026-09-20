@@ -15,7 +15,7 @@ This document describes the **Transfer flow** for on-chain token transfers via t
 
 ### One-Shot Script (Recommended)
 
-Use `transfer_make_sign_send.py` to avoid signature expiry issues. It creates the order, signs locally, and submits immediately.
+Use `transfer_make_sign_send.py` to avoid signature expiry issues. It now requires a preview-first flow: run once with `--preview-only` to get an approval token, then rerun with the exact `--approval-token` to make, sign, and submit.
 
 ```bash
 # EVM token transfer (standard)
@@ -45,7 +45,7 @@ python3 scripts/transfer_make_sign_send.py \
 
 ### One-Shot Script — Social Login Wallet
 
-Use `social_transfer_make_sign_send.py` when the user has a Social Login Wallet. No local private key needed — signing happens via Bitget Wallet TEE.
+Use `social_transfer_make_sign_send.py` when the user has a Social Login Wallet. No local private key needed — signing happens via Bitget Wallet TEE. It uses the same preview-first approval token flow as the local-key script.
 
 ```bash
 # Social Login Wallet: gasless transfer
@@ -115,14 +115,11 @@ When gasless is available, `data.noGas` contains:
 | `need7702Auth` | EVM only: `true` if first-time 7702 binding needed |
 | `acceptableTokens` | Full whitelist of eligible pay tokens |
 
-### Gasless Unavailable — Explicit Fallback
+### Gasless Unavailable — Fail Closed
 
 When `--gasless` is requested but gasless is not available (chain not supported, amount below threshold, no eligible pay token with sufficient balance), the scripts **do not silently fall back** to a standard transfer.
 
-Instead, the scripts:
-1. Print a warning explaining why gasless is unavailable
-2. Prompt the user: `"Type 'yes' to proceed with standard transfer (native gas required), anything else to abort"`
-3. Only proceed if the user types `yes` — otherwise abort
+Instead, the scripts deny execution and require the caller to start a new preview for a standard transfer.
 
 **Scenarios where gasless is not available:**
 - The chain is not in the gasless whitelist
@@ -130,7 +127,7 @@ Instead, the scripts:
 - No pay token has sufficient balance or queryable price
 - `noGas` was not requested
 
-**Agent rule:** If the script aborts due to gasless unavailable, inform the user and ask whether they want to retry without `--gasless` (standard transfer). Do NOT automatically retry.
+**Agent rule:** If the script aborts due to gasless unavailable, inform the user and ask whether they want to create a **new preview** without `--gasless` (standard transfer). Do NOT automatically retry or reuse the old approval token.
 
 ### EIP-7702 Override
 

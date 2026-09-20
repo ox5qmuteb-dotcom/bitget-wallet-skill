@@ -13,6 +13,14 @@ An AI Agent skill that wraps the [Bitget Wallet API](https://web3.bitget.com/en/
 | **API Infrastructure, Not Reimplementation** | Capabilities come from Bitget Wallet's production API. The skill provides the knowledge and tooling layer, not a parallel implementation |
 | **Human-in-the-Loop by Default** | Swap operations generate transaction data but never sign autonomously. User confirmation required for all fund-moving actions |
 
+### Repository-Wide Transaction Policy Boundary
+
+- All fund-moving entrypoints are expected to run with a local preview-first policy file copied from `security/policy.example.json` to a private `security/policy.json` (or another uncommitted path passed with `--policy-file`).
+- The guarded execution scripts now require a `--preview-only` pass first, then an exact `--approval-token` match before make-order/make-transfer, again before signing, and again before send/submit.
+- Unknown or unconfigured assets deny safely. `RWS` is intentionally **disabled by default** until repository-local metadata is configured and verified.
+- Gasless fallback is **fail-closed**: if gasless is unavailable, execution stops instead of silently retrying as a standard transaction.
+- Low-level standalone signing CLIs (`order_sign.py`, `social-wallet.py core sign_transaction`, `x402_pay.py`) are denied by default unless an external policy gate explicitly re-enables them.
+
 ### Market Tools Architecture
 
 Market side handles **token discovery and analysis only** — no trading, wallet, or signing. Skills layer computes scores and rules; backend provides raw data.
@@ -118,11 +126,11 @@ python3 scripts/bitget-wallet-agent-api.py confirm \
 
 x402 is an open standard for HTTP-native payments. When an agent encounters a paid API (HTTP 402), it signs a USDC authorization and retries — no accounts, no API keys needed.
 
-**How it works:**
+**How it works (policy-managed):**
 ```
 1. Agent requests a resource → gets HTTP 402 + payment requirements
-2. Agent signs EIP-3009 TransferWithAuthorization (gasless, off-chain)
-3. Agent retries with PAYMENT-SIGNATURE header
+2. Agent previews the exact payment intent and requires explicit approval
+3. Agent signs EIP-3009 TransferWithAuthorization (gasless, off-chain)
 4. Service's facilitator settles on-chain → agent gets the resource
 ```
 
@@ -131,12 +139,7 @@ x402 is an open standard for HTTP-native payments. When an agent encounters a pa
 - **No accounts needed** — wallet address is your identity
 - **Works with any x402 service** — Pinata IPFS, DiamondClaws DeFi data, and [100+ more](https://www.x402.org/ecosystem)
 
-```bash
-# Example: pay $0.001 for Pinata IPFS upload
-python3 scripts/x402_pay.py pay \
-  --url "https://402.pinata.cloud/v1/pin/private?fileSize=100" \
-  --private-key <key> --method POST --data '{"fileSize": 100}' --auto
-```
+> `scripts/x402_pay.py pay` is intentionally blocked by default because it combines signing with automatic retry/submission. Use manual preview + explicit signing steps after your policy gate instead.
 
 See [`docs/x402-payments.md`](docs/x402-payments.md) for domain knowledge, signing details, and testing guide.
 
@@ -155,7 +158,8 @@ transfer_make_sign_send.py / social_transfer_make_sign_send.py
 - **Gasless (EIP-7702 / FeePayer)** — transfer tokens with zero native gas. Gas deducted from USDT/USDC balance
 - **Multi-chain** — ETH, BNB, Base, Arbitrum, Polygon, Morph, Solana
 - **Server-side broadcast** — client only signs, server handles nonce management and chain tracking
-- **Explicit fallback** — if gasless is unavailable, prompts for confirmation before falling back to standard transfer
+- **Preview-first + exact match** — guarded scripts emit an approval token in preview mode and require the exact same intent before make/sign/send
+- **Fail-closed gasless** — if gasless is unavailable, the guarded scripts deny instead of falling back to standard transfer
 
 ```bash
 # Standard EVM token transfer
