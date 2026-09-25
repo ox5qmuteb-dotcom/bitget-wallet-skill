@@ -1,4 +1,4 @@
-# Bitget Wallet Skill
+# MOTEB ALOTAIBI Wallet Skill
 
 ## Overview
 
