@@ -322,6 +322,15 @@ python3 scripts/bitget-wallet-agent-api.py quote \
 
 > Market data commands support 32+ chains. See `docs/market-data.md` for the full list.
 
+## SRA Tokens
+
+SRA is the owner/name label. The tokens are **Rwa** and **M**.
+
+| Token | Contract Address |
+|-------|------------------|
+| Rwa | `0x9c8b5ca345247396bdfac0395638ca9045c6586e` |
+| M | `0x22b1458e780f8fa71e2f84502cee8b5a3cc731fa` |
+
 ## Future Directions
 
 | Direction | Description |
