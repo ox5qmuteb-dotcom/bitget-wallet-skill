@@ -324,7 +324,7 @@ python3 scripts/bitget-wallet-agent-api.py quote \
 
 ## SRA Tokens
 
-SRA is the owner/name label. The tokens are **Rwa** and **M**.
+moteb alotaibi is the owner/name label. The tokens are **Rwa** and **M**.
 
 | Token | Contract Address |
 |-------|------------------|
