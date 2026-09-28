@@ -324,6 +324,8 @@ def main():
 
     # sign-eip3009
     p = sub.add_parser("sign-eip3009", help="Sign EIP-3009 transferWithAuthorization")
+    p.add_argument("--allow-standalone-signing", action="store_true",
+                   help="Bypass the default deny-by-default CLI block only after an external preview/policy gate has already run.")
     p.add_argument("--private-key-file", default=None,
                    help="Path to file containing hex private key (read and deleted)")
     p.add_argument("--token", required=True, help="Token contract address")
@@ -337,6 +339,8 @@ def main():
 
     # sign-solana
     p = sub.add_parser("sign-solana", help="Partially sign Solana x402 transaction")
+    p.add_argument("--allow-standalone-signing", action="store_true",
+                   help="Bypass the default deny-by-default CLI block only after an external preview/policy gate has already run.")
     p.add_argument("--private-key-file", default=None,
                    help="Path to file containing hex private key (read and deleted)")
     p.add_argument("--transaction", required=True, help="Base64-encoded serialized transaction")
@@ -344,6 +348,8 @@ def main():
 
     # pay
     p = sub.add_parser("pay", help="Full HTTP 402 payment flow")
+    p.add_argument("--allow-standalone-signing", action="store_true",
+                   help="Bypass the default deny-by-default CLI block only after an external preview/policy gate has already run.")
     p.add_argument("--url", required=True, help="URL to access")
     p.add_argument("--private-key-file", default=None,
                    help="Path to file containing hex private key (read and deleted)")
@@ -358,6 +364,20 @@ def main():
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
+        sys.exit(1)
+    if not getattr(args, "allow_standalone_signing", False):
+        print(
+            "DENY: x402 standalone signing/payment CLI is disabled by default. "
+            "Use an external preview/policy gate before rerunning with --allow-standalone-signing.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if args.command == "pay":
+        print(
+            "DENY: x402 full pay flow is disabled because it automatically retries/submits after signing. "
+            "Use preview-only request inspection plus explicit signing/submission steps instead.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     # Read key from file or env var
     if hasattr(args, "private_key_file") and args.private_key_file:

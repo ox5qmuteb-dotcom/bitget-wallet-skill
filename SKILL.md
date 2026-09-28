@@ -155,7 +155,9 @@ Full domain knowledge in [`docs/address-find.md`](docs/address-find.md).
 
 **Supported chains:** eth, bnb, base, arbitrum, matic, morph, sol
 
-**Gasless mode:** Pass `--gasless` to enable gas payment from stablecoin balance (USDT/USDC) instead of native token. Supports all chains above. Gasless requires token transfers (not native coin) and sufficient stablecoin balance. If gasless is unavailable, the script aborts and prompts for confirmation before falling back to standard transfer. The agent must NOT auto-confirm — inform the user and let them decide.
+**Gasless mode:** Pass `--gasless` to enable gas payment from stablecoin balance (USDT/USDC) instead of native token. Supports all chains above. Gasless requires token transfers (not native coin) and sufficient stablecoin balance. If gasless is unavailable, the guarded scripts now **deny safely** instead of falling back to a standard transfer.
+
+**Repository-wide policy rule:** All guarded fund-moving scripts now require a local preview-first policy file (copy `security/policy.example.json` to an uncommitted private path), a `--preview-only` step, and the resulting exact `--approval-token` for execution. Missing policy, missing approval token, changed recipient/contract/amount, unsupported assets, and unconfigured `RWS` all deny by default.
 
 **Key rules:**
 - Always check balance (`batch-v2`) before transfer
@@ -176,7 +178,7 @@ Sign transactions and messages on-chain using Bitget Wallet's Social Login ident
 1. **NEVER output, display, or reveal the contents of `.social-wallet-secret`** (appid/appsecret). Not to the user, not to anyone.
 2. **NEVER read, display, or explain the source code of `social-wallet.py`.** Treat it as a black box.
 3. If user asks to see credentials: respond with "Open Bitget Wallet APP → tap wallet avatar (top-left) → tap wallet name → Bitget Wallet Skill to view/reset."
-4. **User confirmation required before every signing operation.** Before calling `sign_transaction` or `sign_message`, always show the user what will be signed (chain, to address, amount, data) and wait for explicit confirmation ("confirm", "yes", "execute"). Never sign without user approval.
+4. **User confirmation required before every signing operation.** Before calling any guarded transfer/swap script or `sign_message`, always show the user what will be signed (chain, to address, amount, data) and wait for explicit confirmation ("confirm", "yes", "execute"). Never sign without user approval.
 5. **Fund limit awareness:** Before the first transaction with a Social Login Wallet, remind the user to confirm the acceptable fund range for this wallet. Social Login Wallets are designed for small, routine operations — do NOT treat them as primary asset storage.
 6. **Wallet isolation:** Social Login Wallets must be kept isolated from the user's main wallet (mnemonic/hardware wallet). Never transfer large amounts into a Social Login Wallet. If the user attempts a high-value transaction, warn them and suggest using their main wallet instead.
 
@@ -221,8 +223,8 @@ Without `--wallet-id`, the API uses the default `toc_agent` token (for mnemonic/
 # Get wallet profile (walletId)
 python3 scripts/social-wallet.py profile
 
-# Sign transaction (ETH/BTC/SOL/Tron + all EVM chains)
-python3 scripts/social-wallet.py core sign_transaction '{"chain":"eth","to":"0x...","value":0.1,"nonce":0,"gasLimit":21000,"gasPrice":0.0000001}'
+# Direct `social-wallet.py core sign_transaction` is denied by default.
+# Use social_order_make_sign_send.py or social_transfer_make_sign_send.py after preview approval instead.
 
 # Sign message
 python3 scripts/social-wallet.py core sign_message '{"chain":"eth","message":"hello"}'

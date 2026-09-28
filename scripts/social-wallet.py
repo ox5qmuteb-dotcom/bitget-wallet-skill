@@ -242,6 +242,11 @@ def main():
             print("Usage: python social-wallet.py core <operation> '<param_json>'", file=sys.stderr)
             sys.exit(1)
         operation = extra_args[0]
+        if operation == "sign_transaction":
+            _error_exit(
+                "DENY: direct social-wallet sign_transaction is disabled by default. "
+                "Use the guarded social_order_make_sign_send.py or social_transfer_make_sign_send.py entrypoints."
+            )
         param = json.loads(" ".join(extra_args[1:]))
         if isinstance(param, dict):
             param = json.dumps(param, separators=(",", ":"), ensure_ascii=False)

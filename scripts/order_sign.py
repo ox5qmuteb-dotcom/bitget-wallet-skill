@@ -742,11 +742,22 @@ def _is_solana_order(order_data: dict) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Sign order-create response")
+    parser.add_argument("--allow-standalone-signing", action="store_true",
+                        help="Bypass the default deny-by-default CLI block only after an external preview/policy gate has already run.")
     parser.add_argument("--order-json", help="Order-create response JSON string")
     parser.add_argument("--private-key-file", help="Path to file containing EVM private key (hex). File is read and deleted.")
     parser.add_argument("--private-key-file-sol", help="Path to file containing Solana private key. File is read and deleted.")
     parser.add_argument("--private-key-file-tron", help="Path to file containing Tron private key. File is read and deleted.")
     args = parser.parse_args()
+
+    if not args.allow_standalone_signing:
+        print(
+            "DENY: standalone order_sign.py CLI execution is disabled by default. "
+            "Use the guarded order_make_sign_send.py / social_order_make_sign_send.py flow, "
+            "or rerun only after an external preview/policy gate with --allow-standalone-signing.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Read keys from files — delete file immediately after reading
     from key_utils import read_key_file
