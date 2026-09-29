@@ -39,10 +39,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import tx_policy
-
 _SOLANA_CHAIN_ID = 501
-DEFAULT_POLICY_FILE = SCRIPTS_DIR.parent / "security" / "policy.json"
+
+import tx_policy
 
 
 def _is_solana_order(order_data: dict) -> bool:
@@ -93,29 +92,11 @@ def _is_tron_order(order_data: dict) -> bool:
     return False
 
 
-def _detect_order_action(from_chain: str, to_chain: str) -> str:
-    return "bridge" if (from_chain or "").lower() != (to_chain or "").lower() else "swap"
-
-
-def _tx_calldata(tx_item: dict) -> str:
-    derive = tx_item.get("deriveTransaction") or {}
-    data = derive.get("data")
-    if not data and isinstance(tx_item.get("data"), str):
-        data = tx_item.get("data")
-    return str(data or "").lower()
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(
         description="makeOrder + sign + send. Supports EVM and Solana. Keys used in memory only, never output."
     )
-    parser.add_argument("--policy-file", default=str(DEFAULT_POLICY_FILE),
-                        help="Path to the local transaction policy JSON file.")
-    parser.add_argument("--preview-only", action="store_true",
-                        help="Validate policy and print preview payload + approval token without any network/sign/send step.")
-    parser.add_argument("--approval-token", default="",
-                        help="Preview approval token returned by --preview-only. Required for execution.")
     parser.add_argument("--private-key-file", default=None, help="Path to file containing EVM private key (hex). File is read and deleted.")
     parser.add_argument("--private-key-file-sol", default=None, help="Path to file containing Solana private key (base58 or hex). File is read and deleted.")
     parser.add_argument("--private-key-file-tron", default=None, help="Path to file containing Tron private key (hex). File is read and deleted.")
@@ -132,52 +113,40 @@ def main():
     parser.add_argument("--slippage", required=True)
     parser.add_argument("--market", required=True)
     parser.add_argument("--protocol", required=True)
+    parser.add_argument("--confirm", action="store_true",
+                        help="Execute after a matching preview was approved.")
+    parser.add_argument("--approval-token", default="",
+                        help="Approval token returned by preview mode. Required with --confirm.")
+    parser.add_argument("--policy-file", default=None,
+                        help="Path to the JSON security policy file. Defaults to security/policy.json.")
     args = parser.parse_args()
 
-    action = _detect_order_action(args.from_chain, args.to_chain)
-    preview_payload = tx_policy.build_preview_payload(
-        action,
-        orderId=args.order_id,
-        fromChain=args.from_chain,
-        fromContract=args.from_contract,
-        fromSymbol=args.from_symbol,
-        fromAddress=args.from_address,
-        toChain=args.to_chain,
-        toContract=args.to_contract or "",
-        toSymbol=args.to_symbol,
-        toAddress=args.to_address,
-        fromAmount=str(args.from_amount),
-        slippage=str(args.slippage),
-        market=args.market,
-        protocol=args.protocol,
-        walletType="local-key",
-    )
+    policy_ctx = tx_policy.load_policy_context(args.policy_file)
+    intent = {
+        "operation": "swap",
+        "walletMode": "local",
+        "orderId": args.order_id,
+        "fromChain": args.from_chain,
+        "fromContract": args.from_contract,
+        "fromSymbol": args.from_symbol,
+        "fromAddress": args.from_address,
+        "toChain": args.to_chain,
+        "toContract": args.to_contract or "",
+        "toSymbol": args.to_symbol,
+        "toAddress": args.to_address,
+        "fromAmount": args.from_amount,
+        "slippage": args.slippage,
+        "market": args.market,
+        "protocol": args.protocol,
+    }
     try:
-        cfg = tx_policy.load_policy_config(args.policy_file)
-        tx_policy.validate_asset_allowed(cfg, args.from_chain, args.from_contract, args.from_symbol)
-        if action == "bridge":
-            tx_policy.validate_asset_allowed(cfg, args.to_chain, args.to_contract or "", args.to_symbol)
-        tx_policy.evaluate_transfer(
-            tx_policy.TransferRequest(
-                chain=args.to_chain,
-                recipient=args.to_address,
-                amount=float(args.from_amount),
-                contract=args.to_contract or args.from_contract,
-                asset_symbol=args.to_symbol,
-                action=action,
-                wallet_type="local-key",
-                preview_payload=preview_payload if not args.preview_only else None,
-                approval_token=args.approval_token,
-                is_submit=not args.preview_only,
-            ),
-            cfg,
-        )
-        if args.preview_only:
-            tx_policy.append_audit_log(cfg, {"decision": "preview", "preview": preview_payload})
-            print(json.dumps(tx_policy.emit_preview(preview_payload), indent=2))
+        if not args.confirm:
+            print(json.dumps(tx_policy.issue_preview(policy_ctx, intent), indent=2))
             return
+        approved_intent = tx_policy.require_approval(policy_ctx, intent, args.approval_token)
     except tx_policy.PolicyError as exc:
-        print(str(exc), file=sys.stderr)
+        tx_policy.deny_and_log(policy_ctx, intent, str(exc))
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc)}, indent=2), file=sys.stderr)
         sys.exit(1)
 
     # Read keys from files — delete file immediately after reading
@@ -225,74 +194,12 @@ def main():
     if not order_id or not txs:
         print("Error: no orderId or txs in makeOrder response", file=sys.stderr)
         sys.exit(1)
-
-    actual_payload = tx_policy.build_preview_payload(
-        action,
-        orderId=order_id,
-        fromChain=args.from_chain,
-        fromContract=args.from_contract,
-        fromSymbol=args.from_symbol,
-        fromAddress=args.from_address,
-        toChain=args.to_chain,
-        toContract=args.to_contract or "",
-        toSymbol=args.to_symbol,
-        toAddress=args.to_address,
-        fromAmount=str(args.from_amount),
-        slippage=str(args.slippage),
-        market=args.market,
-        protocol=args.protocol,
-        walletType="local-key",
-        txCount=len(txs),
-    )
     try:
-        tx_policy.validate_asset_allowed(cfg, args.from_chain, args.from_contract, args.from_symbol)
-        if action == "bridge":
-            tx_policy.validate_asset_allowed(cfg, args.to_chain, args.to_contract or "", args.to_symbol)
-        tx_policy.evaluate_transfer(
-            tx_policy.TransferRequest(
-                chain=args.to_chain,
-                recipient=args.to_address,
-                amount=float(args.from_amount),
-                contract=args.to_contract or args.from_contract,
-                asset_symbol=args.to_symbol,
-                action=action,
-                wallet_type="local-key",
-                preview_payload=actual_payload,
-                approval_token=args.approval_token,
-                is_submit=True,
-            ),
-            cfg,
-        )
-    except (TypeError, ValueError, tx_policy.PolicyError) as exc:
-        print(f"DENY: preview mismatch before signing: {exc}", file=sys.stderr)
+        tx_policy.inspect_swap_response(policy_ctx, approved_intent, data)
+    except tx_policy.PolicyError as exc:
+        tx_policy.deny_and_log(policy_ctx, approved_intent, str(exc), order_id=order_id)
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc), "orderId": order_id}, indent=2), file=sys.stderr)
         sys.exit(1)
-    tx_policy.append_audit_log(cfg, {"decision": "approved-for-sign", "orderId": order_id, "preview": actual_payload})
-
-    for tx_item in txs:
-        calldata = _tx_calldata(tx_item)
-        flagged_action = None
-        if calldata.startswith("0x095ea7b3"):
-            flagged_action = "approve"
-        elif calldata.startswith("0xd505accf") or calldata.startswith("0x8fcbaf0c"):
-            flagged_action = "permit"
-        if flagged_action:
-            try:
-                tx_policy.evaluate_transfer(
-                    tx_policy.TransferRequest(
-                        chain=args.to_chain,
-                        recipient=args.to_address,
-                        amount=float(args.from_amount),
-                        contract=args.to_contract or args.from_contract,
-                        asset_symbol=args.to_symbol,
-                        calldata=calldata,
-                        action=flagged_action,
-                        wallet_type="local-key",
-                    ),
-                    cfg,
-                )
-            except (TypeError, ValueError, tx_policy.PolicyError) as exc:
-                print(f"DENY: unsafe swap leg before signing: {exc}", file=sys.stderr)
-                sys.exit(1)
 
     # Auto-detect chain and sign
     if _is_solana_order(data):
@@ -323,31 +230,11 @@ def main():
     args.private_key_sol = None
     args.private_key_tron = None
 
-    try:
-        tx_policy.evaluate_transfer(
-            tx_policy.TransferRequest(
-                chain=args.to_chain,
-                recipient=args.to_address,
-                amount=float(args.from_amount),
-                contract=args.to_contract or args.from_contract,
-                asset_symbol=args.to_symbol,
-                action=action,
-                wallet_type="local-key",
-                preview_payload=actual_payload,
-                approval_token=args.approval_token,
-                is_submit=True,
-            ),
-            cfg,
-        )
-    except (TypeError, ValueError, tx_policy.PolicyError) as exc:
-        print(f"DENY: preview mismatch before submission: {exc}", file=sys.stderr)
-        sys.exit(1)
-
     send_resp = send(order_id=order_id, txs=txs)
-    tx_policy.append_audit_log(cfg, {"decision": "submitted", "orderId": order_id, "txs": txs, "preview": actual_payload})
     print(json.dumps(send_resp, indent=2))
     if send_resp.get("status") != 0 or send_resp.get("error_code") != 0:
         sys.exit(1)
+    tx_policy.record_success(policy_ctx, approved_intent, args.approval_token, order_id=order_id)
     print(
         f"\nOrderId: {order_id}\nCheck: python3 scripts/bitget-wallet-agent-api.py get-order-details --order-id {order_id}",
         file=sys.stderr,

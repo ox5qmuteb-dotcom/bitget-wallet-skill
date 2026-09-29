@@ -46,9 +46,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 import tx_policy
 
 
-DEFAULT_POLICY_FILE = SCRIPTS_DIR.parent / "security" / "policy.json"
-
-
 def _sign_evm_standard(source: dict, private_key: str) -> str:
     """
     Sign evm_legacy or evm_1559 source data. Returns signed raw tx hex (0x-prefixed).
@@ -157,12 +154,6 @@ def main():
         description="Gasless token transfer: makeTransferOrder + sign + submitTransferOrder. "
                     "Keys used in memory only, never output."
     )
-    parser.add_argument("--policy-file", default=str(DEFAULT_POLICY_FILE),
-                        help="Path to the local transaction policy JSON file.")
-    parser.add_argument("--preview-only", action="store_true",
-                        help="Validate policy and print preview payload + approval token without any network call.")
-    parser.add_argument("--approval-token", default="",
-                        help="Preview approval token returned by --preview-only. Required for execution.")
     parser.add_argument("--private-key-file", default=None,
                         help="Path to file containing EVM private key (hex). File is read and deleted.")
     parser.add_argument("--private-key-file-sol", default=None,
@@ -186,48 +177,39 @@ def main():
     parser.add_argument("--override-7702", dest="override_7702", action="store_true",
                         help="[DANGEROUS] Overwrite an existing third-party EIP-7702 binding. "
                              "Script will prompt for confirmation before proceeding.")
+    parser.add_argument("--confirm", action="store_true",
+                        help="Execute after a matching preview was approved.")
+    parser.add_argument("--approval-token", default="",
+                        help="Approval token returned by preview mode. Required with --confirm.")
+    parser.add_argument("--policy-file", default=None,
+                        help="Path to the JSON security policy file. Defaults to security/policy.json.")
     args = parser.parse_args()
 
-    preview_payload = tx_policy.build_preview_payload(
-        "transfer",
-        chain=args.chain,
-        to=args.to_address,
-        contract=args.contract,
-        amount=str(args.amount),
-        memo=args.memo,
-        gasless=bool(args.gasless),
-        gaslessPayToken=args.gasless_pay_token or "",
-        override7702=bool(args.override_7702),
-        walletType="local-key",
-    )
-
+    policy_ctx = tx_policy.load_policy_context(args.policy_file)
+    intent = {
+        "operation": "transfer",
+        "walletMode": "local",
+        "chain": args.chain,
+        "contract": args.contract or "",
+        "from": args.from_address,
+        "to": args.to_address,
+        "amount": args.amount,
+        "memo": args.memo,
+        "gasless": args.gasless,
+        "gaslessPayToken": args.gasless_pay_token or "",
+        "override7702": args.override_7702,
+    }
     try:
-        cfg = tx_policy.load_policy_config(args.policy_file)
-        tx_policy.evaluate_transfer(
-            tx_policy.TransferRequest(
-                chain=args.chain,
-                recipient=args.to_address,
-                amount=float(args.amount),
-                contract=args.contract,
-                action="transfer",
-                wallet_type="local-key",
-                gasless=bool(args.gasless),
-                override_7702=bool(args.override_7702),
-                preview_payload=preview_payload if not args.preview_only else None,
-                approval_token=args.approval_token,
-                is_submit=not args.preview_only,
-            ),
-            cfg,
-        )
-        if args.preview_only:
-            tx_policy.append_audit_log(cfg, {"decision": "preview", "preview": preview_payload})
-            print(json.dumps(tx_policy.emit_preview(preview_payload), indent=2))
+        if not args.confirm:
+            print(json.dumps(tx_policy.issue_preview(policy_ctx, intent), indent=2))
             return
+        approved_intent = tx_policy.require_approval(policy_ctx, intent, args.approval_token)
     except tx_policy.PolicyError as exc:
-        print(str(exc), file=sys.stderr)
+        tx_policy.deny_and_log(policy_ctx, intent, str(exc))
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc)}, indent=2), file=sys.stderr)
         sys.exit(1)
 
-    # Read keys from files only after preview approval
+    # Read keys from files
     from key_utils import read_key_file
 
     private_key = read_key_file(args.private_key_file) if args.private_key_file else None
@@ -241,24 +223,8 @@ def main():
     # Import API module
     _api = importlib.import_module("bitget-wallet-agent-api")
 
-    # EIP-7702 override pre-flight confirmation (before API call)
     if args.override_7702:
-        print("", file=sys.stderr)
-        print("⚠️  EIP-7702 OVERRIDE WARNING", file=sys.stderr)
-        print("This will OVERWRITE the existing third-party EIP-7702 binding on this address.", file=sys.stderr)
-        print("This is a permanent account-level change. The previous binding cannot be restored.", file=sys.stderr)
-        print("", file=sys.stderr)
-        if not sys.stdin.isatty():
-            print("ERROR: --override-7702 requires interactive confirmation (TTY). Aborting.", file=sys.stderr)
-            sys.exit(1)
-        try:
-            confirm = input("Type 'yes' to confirm override, anything else to abort: ").strip()
-        except EOFError:
-            confirm = ""
-        if confirm != "yes":
-            print("Aborted — 7702 override not confirmed.", file=sys.stderr)
-            sys.exit(1)
-        print("    7702 override confirmed by user.", file=sys.stderr)
+        print("⚠️  EIP-7702 OVERRIDE WARNING: this permanently replaces any existing third-party binding.", file=sys.stderr)
 
     # Step 1: makeTransferOrder
     print(">>> Step 1: makeTransferOrder", file=sys.stderr)
@@ -300,40 +266,12 @@ def main():
     print(f"    orderId: {order_id}", file=sys.stderr)
     print(f"    chain: {data.get('chain')}, from: {data.get('from')}, to: {data.get('to')}", file=sys.stderr)
     print(f"    amount: {data.get('amount')}, contract: {data.get('contract')}", file=sys.stderr)
-
-    actual_payload = tx_policy.build_preview_payload(
-        "transfer",
-        chain=data.get("chain"),
-        to=data.get("to"),
-        contract=data.get("contract", ""),
-        amount=str(data.get("amount")),
-        memo=data.get("memo", args.memo),
-        gasless=bool(args.gasless),
-        gaslessPayToken=args.gasless_pay_token or "",
-        override7702=bool(args.override_7702),
-        walletType="local-key",
-    )
     try:
-        tx_policy.evaluate_transfer(
-            tx_policy.TransferRequest(
-                chain=data.get("chain") or args.chain,
-                recipient=data.get("to") or args.to_address,
-                amount=float(data.get("amount")),
-                contract=data.get("contract", ""),
-                action="transfer",
-                wallet_type="local-key",
-                gasless=bool(args.gasless),
-                override_7702=bool(args.override_7702),
-                preview_payload=actual_payload,
-                approval_token=args.approval_token,
-                is_submit=True,
-            ),
-            cfg,
-        )
-    except (TypeError, ValueError, tx_policy.PolicyError) as exc:
-        print(f"DENY: preview mismatch before signing: {exc}", file=sys.stderr)
+        tx_policy.inspect_transfer_response(policy_ctx, approved_intent, data)
+    except tx_policy.PolicyError as exc:
+        tx_policy.deny_and_log(policy_ctx, approved_intent, str(exc), order_id=order_id)
+        print(json.dumps({"status": -1, "error_code": -20000, "msg": str(exc), "orderId": order_id}, indent=2), file=sys.stderr)
         sys.exit(1)
-    tx_policy.append_audit_log(cfg, {"decision": "approved-for-sign", "orderId": order_id, "preview": actual_payload})
 
     # Check estimateRevert
     if data.get("estimateRevert"):
@@ -352,10 +290,6 @@ def main():
               file=sys.stderr)
         if no_gas_info.get("warn"):
             print(f"    WARNING: {no_gas_info['warn']}", file=sys.stderr)
-    elif args.gasless:
-        print("DENY: gasless requested but unavailable; fail-closed policy blocks fallback to standard transfer.",
-              file=sys.stderr)
-        sys.exit(1)
 
     # Fee info
     fee = data.get("fee", {})
@@ -409,33 +343,13 @@ def main():
     private_key_sol = None
 
     # Step 3: submitTransferOrder
-    try:
-        tx_policy.evaluate_transfer(
-            tx_policy.TransferRequest(
-                chain=data.get("chain") or args.chain,
-                recipient=data.get("to") or args.to_address,
-                amount=float(data.get("amount")),
-                contract=data.get("contract", ""),
-                action="transfer",
-                wallet_type="local-key",
-                gasless=bool(args.gasless),
-                override_7702=bool(args.override_7702),
-                preview_payload=actual_payload,
-                approval_token=args.approval_token,
-                is_submit=True,
-            ),
-            cfg,
-        )
-    except (TypeError, ValueError, tx_policy.PolicyError) as exc:
-        print(f"DENY: preview mismatch before submission: {exc}", file=sys.stderr)
-        sys.exit(1)
     print(">>> Step 3: submitTransferOrder", file=sys.stderr)
     submit_resp = _api.submit_transfer_order(order_id=order_id, sig=sig)
-    tx_policy.append_audit_log(cfg, {"decision": "submitted", "orderId": order_id, "sig": sig, "preview": actual_payload})
     print(json.dumps(submit_resp, indent=2))
 
     if submit_resp.get("status") != 0:
         sys.exit(1)
+    tx_policy.record_success(policy_ctx, approved_intent, args.approval_token, order_id=order_id)
 
     submit_data = submit_resp.get("data", {})
     print(f"\nOrderId: {order_id}", file=sys.stderr)
